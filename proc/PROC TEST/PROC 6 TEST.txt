@@ -1,0 +1,28 @@
+-- Insert a member into the Members table
+INSERT INTO Members (member_id, name, email, phone, address, date_of_birth, membership_date, total_trips)
+VALUES ('Z930', 'Alice Wonderland', 'alice@example.com', '9876543210', '123 Oak St', TO_DATE('1992-04-15', 'YYYY-MM-DD'), SYSDATE - 365, 5);
+-- Insert a passenger linked to the member
+INSERT INTO Passengers (passenger_id, member_id, name, email, phone, passport_number, nationality)
+VALUES ('P930', 'Z930', 'Alice Wonderland', 'alice@example.com', '9876543210', 'B1234567', 'USA');
+-- Insert a flight that has been completed
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status)
+VALUES ('F930', 'A001', 'FL930', SYSDATE - 10, SYSDATE - 9, 'New York', 'Paris', 'Completed');
+
+-- Insert a booking for the completed flight linked to the passenger
+INSERT INTO Bookings (booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status)
+VALUES ('B930', 'F930', 'P930', SYSDATE - 15, '12A', 'Confirmed', 'Paid');
+-- Insert active promotions that will be part of the newsletter
+INSERT INTO Promotions (promotion_id, name, start_date, end_date, discount_percentage, status, minimum_trips_required)
+VALUES ('PM931', 'Winter Getaway', SYSDATE + 1, SYSDATE + 30, 20, 'Active', 0);
+
+INSERT INTO Promotions (promotion_id, name, start_date, end_date, discount_percentage, status, minimum_trips_required)
+VALUES ('PM932', 'Spring Sale', SYSDATE + 5, SYSDATE + 35, 15, 'Active', 0);
+
+INSERT INTO Promotions (promotion_id, name, start_date, end_date, discount_percentage, status, minimum_trips_required)
+VALUES ('PM933', 'Summer Adventure', SYSDATE + 10, SYSDATE + 40, 25, 'Active', 0);
+SET SERVEROUTPUT ON;
+
+BEGIN
+    generate_member_newsletter('Z930');
+END;
+/

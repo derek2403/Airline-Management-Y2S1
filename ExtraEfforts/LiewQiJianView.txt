@@ -1,0 +1,16 @@
+CREATE OR REPLACE VIEW member_travel_history_view AS
+SELECT 
+    m.member_id,
+    m.name AS member_name,
+    f.flight_number,
+    f.departure_time,
+    f.origin,
+    f.destination,
+    b.seat_number
+FROM 
+    Members m
+JOIN Passengers p ON m.member_id = p.member_id
+JOIN Bookings b ON p.passenger_id = b.passenger_id
+JOIN Flights f ON b.flight_id = f.flight_id;
+
+SELECT * FROM member_travel_history_view;

@@ -1,0 +1,69 @@
+CREATE OR REPLACE PROCEDURE booking_revenue_report IS
+    CURSOR flight_cur IS
+        SELECT f.flight_id, f.flight_number, f.departure_time, f.origin, f.destination,
+               COUNT(b.booking_id) AS total_bookings,
+               SUM(p.amount) AS total_revenue
+        FROM Flights f
+        LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+        LEFT JOIN Payments p ON b.booking_id = p.booking_id
+        WHERE f.departure_time BETWEEN TRUNC(SYSDATE) AND TRUNC(SYSDATE) + 30  -- Next 30 days
+        GROUP BY f.flight_id, f.flight_number, f.departure_time, f.origin, f.destination
+        ORDER BY f.departure_time;
+
+    CURSOR booking_details_cur(p_flight_id VARCHAR2) IS
+        SELECT b.booking_id, p.name AS passenger_name, b.seat_number, 
+               pay.amount AS payment_amount, i.name AS item_name, ip.quantity
+        FROM Bookings b
+        JOIN Passengers p ON b.passenger_id = p.passenger_id
+        LEFT JOIN Payments pay ON b.booking_id = pay.booking_id
+        LEFT JOIN Item_Purchases ip ON b.booking_id = ip.booking_id
+        LEFT JOIN Items i ON ip.item_id = i.item_id
+        WHERE b.flight_id = p_flight_id;
+
+    v_flight_rec flight_cur%ROWTYPE;
+    v_booking_rec booking_details_cur%ROWTYPE;
+    v_total_revenue NUMBER := 0;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Comprehensive Booking and Revenue Report');
+    DBMS_OUTPUT.PUT_LINE('Period: Next 30 days');
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+
+    OPEN flight_cur;
+    LOOP
+        FETCH flight_cur INTO v_flight_rec;
+        EXIT WHEN flight_cur%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE('Flight: ' || v_flight_rec.flight_number);
+        DBMS_OUTPUT.PUT_LINE('Departure: ' || TO_CHAR(v_flight_rec.departure_time, 'DD-MON-YYYY HH24:MI'));
+        DBMS_OUTPUT.PUT_LINE('Route: ' || v_flight_rec.origin || ' to ' || v_flight_rec.destination);
+        DBMS_OUTPUT.PUT_LINE('Total Bookings: ' || v_flight_rec.total_bookings);
+        DBMS_OUTPUT.PUT_LINE('Total Revenue: $' || TO_CHAR(v_flight_rec.total_revenue, '999,999.99'));
+        DBMS_OUTPUT.PUT_LINE('Booking Details:');
+
+        OPEN booking_details_cur(v_flight_rec.flight_id);
+        LOOP
+            FETCH booking_details_cur INTO v_booking_rec;
+            EXIT WHEN booking_details_cur%NOTFOUND;
+
+            DBMS_OUTPUT.PUT_LINE('  Booking ID: ' || v_booking_rec.booking_id || 
+                                 ', Passenger: ' || v_booking_rec.passenger_name || 
+                                 ', Seat: ' || v_booking_rec.seat_number || 
+                                 ', Payment: $' || TO_CHAR(v_booking_rec.payment_amount, '999,999.99'));
+            IF v_booking_rec.item_name IS NOT NULL THEN
+                DBMS_OUTPUT.PUT_LINE('    Additional Purchase: ' || v_booking_rec.item_name || 
+                                     ' (Quantity: ' || v_booking_rec.quantity || ')');
+            END IF;
+        END LOOP;
+        CLOSE booking_details_cur;
+
+        -- Accumulate the total revenue
+        v_total_revenue := v_total_revenue + NVL(v_flight_rec.total_revenue, 0); -- Handle possible NULL values
+
+        DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    END LOOP;
+    CLOSE flight_cur;
+
+    -- Display the total revenue at the end
+    DBMS_OUTPUT.PUT_LINE('Total Revenue for All Flights: $' || TO_CHAR(v_total_revenue, '999,999,999.99'));
+END;
+/

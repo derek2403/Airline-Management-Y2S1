@@ -1,0 +1,26 @@
+-- Inserting an airplane
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status) VALUES
+('A810', 'Boeing 787', 250, TO_DATE('2016-05-21', 'YYYY-MM-DD'), 'ACTIVE');
+
+-- Inserting flights that might be affected by maintenance
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) VALUES
+('F810', 'A810', 'FL810', SYSDATE + 1, SYSDATE + 1.1, 'New York', 'London', 'SCHEDULED');
+
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) VALUES
+('F811', 'A810', 'FL811', SYSDATE + 2, SYSDATE + 2.1, 'London', 'New York', 'SCHEDULED');
+
+-- Check statuses and related info before and after trigger execution
+SELECT * FROM Airplanes WHERE airplane_id = 'A810';
+SELECT * FROM Flights WHERE airplane_id = 'A810';
+SELECT * FROM Maintenance_Tasks WHERE maintenance_task_id = 'MT810';
+
+
+-- Inserting a maintenance task that triggers the condition
+INSERT INTO Maintenance_Tasks (maintenance_task_id, maintenance_id, airplane_id, maintenance_date, status) VALUES
+('MT810', 'M001', 'A810', SYSDATE, 'IN_PROGRESS');
+SELECT * FROM Airplanes WHERE airplane_id = 'A810';
+SELECT * FROM Flights WHERE airplane_id = 'A810';
+SELECT * FROM Maintenance_Tasks WHERE maintenance_task_id = 'MT810';
+
+-- Updating the maintenance task to completed
+UPDATE Maintenance_Tasks SET status = 'COMPLETED' WHERE maintenance_task_id = 'MT810';

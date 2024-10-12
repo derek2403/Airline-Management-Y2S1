@@ -1,0 +1,50 @@
+CREATE OR REPLACE PROCEDURE process_maintenance_task (
+    p_airplane_id IN Airplanes.airplane_id%TYPE,
+    p_maintenance_id IN Maintenance.maintenance_id%TYPE,
+    p_part_id IN Maintenance_Parts.part_id%TYPE
+) AS
+    v_part_cost Maintenance_Parts.cost%TYPE;
+    v_airplane_status Airplanes.status%TYPE;
+BEGIN
+    -- Check airplane status
+    SELECT status INTO v_airplane_status
+    FROM Airplanes
+    WHERE airplane_id = p_airplane_id;
+
+    IF v_airplane_status != 'Grounded' THEN
+        RAISE_APPLICATION_ERROR(-20004, 'Airplane must be grounded for maintenance');
+    END IF;
+
+    -- Get part cost
+    SELECT cost INTO v_part_cost
+    FROM Maintenance_Parts
+    WHERE part_id = p_part_id;
+
+    -- Create maintenance task
+    INSERT INTO Maintenance_Tasks (
+        maintenance_task_id, maintenance_id, airplane_id, part_id, maintenance_date, status
+    )
+    VALUES (
+        maintenance_task_seq.NEXTVAL, p_maintenance_id, p_airplane_id, p_part_id, SYSDATE, 'In Progress'
+    );
+
+    -- Update part status and replacement date
+    UPDATE Maintenance_Parts
+    SET status = 'In Use', replacement_date = SYSDATE
+    WHERE part_id = p_part_id;
+
+    -- Update airplane status to 'Maintenance' (shortened to fit within 12 characters)
+    UPDATE Airplanes
+    SET status = 'Maintenance'
+    WHERE airplane_id = p_airplane_id;
+
+    COMMIT;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20005, 'Invalid airplane, maintenance, or part ID');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/

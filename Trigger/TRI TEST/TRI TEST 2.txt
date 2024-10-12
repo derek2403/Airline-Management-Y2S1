@@ -1,0 +1,22 @@
+-- Inserting a member
+INSERT INTO Members (member_id, name, email, phone, address, date_of_birth, membership_date, total_trips) VALUES
+('Z778', 'Alice JohnsonR', 'alice.johnsonR@example.com', '9088776655', '456 Oak St', TO_DATE('1985-08-15', 'YYYY-MM-DD'), SYSDATE, 0);
+
+-- Inserting a passenger linked to the member
+INSERT INTO Passengers (passenger_id, member_id, name, email, phone, passport_number, nationality) VALUES
+('P778', 'Z778', 'Alice JohnsonR', 'alice.johnsonR@example.com', '9088776655', 'C1234567', 'Canada');
+
+-- Inserting an airplane with a specific capacity
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status) VALUES
+('A778', 'Boeing 737', 1, TO_DATE('2010-05-21', 'YYYY-MM-DD'), 'ACTIVE');
+
+-- Inserting a flight that will use this airplane
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) VALUES
+('F778', 'A778', 'FL778', SYSDATE + 1, SYSDATE + 1.1, 'Toronto', 'Vancouver', 'SCHEDULED');
+
+-- Attempting to insert the 151st booking which should fail
+INSERT INTO Bookings (booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status) VALUES
+('B778', 'F778', 'P778', SYSDATE, 'A32', 'CONFIRMED', 'PAID');
+INSERT INTO Bookings (booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status) VALUES
+('B779', 'F778', 'P779', SYSDATE, 'B32', 'CONFIRMED', 'PAID');
+

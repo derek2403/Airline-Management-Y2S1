@@ -1,0 +1,55 @@
+CREATE OR REPLACE PROCEDURE member_loyalty_report(
+    p_start_date IN DATE,
+    p_end_date IN DATE
+) IS
+    CURSOR member_cur IS
+        SELECT m.member_id, m.name, m.total_trips,
+               COUNT(b.booking_id) AS bookings_in_period
+        FROM Members m
+        LEFT JOIN Passengers p ON m.member_id = p.member_id
+        LEFT JOIN Bookings b ON p.passenger_id = b.passenger_id
+        WHERE b.booking_date BETWEEN p_start_date AND p_end_date
+        GROUP BY m.member_id, m.name, m.total_trips
+        ORDER BY bookings_in_period DESC;
+
+    CURSOR booking_details_cur(p_member_id VARCHAR2) IS
+        SELECT f.flight_number, f.origin, f.destination, b.booking_date
+        FROM Bookings b
+        JOIN Flights f ON b.flight_id = f.flight_id
+        JOIN Passengers p ON b.passenger_id = p.passenger_id
+        WHERE p.member_id = p_member_id
+        AND b.booking_date BETWEEN p_start_date AND p_end_date;
+
+    v_member_rec member_cur%ROWTYPE;
+    v_booking_rec booking_details_cur%ROWTYPE;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Member Loyalty and Booking Patterns Report');
+    DBMS_OUTPUT.PUT_LINE('Period: ' || TO_CHAR(p_start_date, 'DD-MON-YYYY') || ' to ' || TO_CHAR(p_end_date, 'DD-MON-YYYY'));
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+
+    OPEN member_cur;
+    LOOP
+        FETCH member_cur INTO v_member_rec;
+        EXIT WHEN member_cur%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE('Member: ' || v_member_rec.name || ' (ID: ' || v_member_rec.member_id || ')');
+        DBMS_OUTPUT.PUT_LINE('Total Trips: ' || v_member_rec.total_trips);
+        DBMS_OUTPUT.PUT_LINE('Bookings in Period: ' || v_member_rec.bookings_in_period);
+        DBMS_OUTPUT.PUT_LINE('Recent Bookings:');
+
+        OPEN booking_details_cur(v_member_rec.member_id);
+        LOOP
+            FETCH booking_details_cur INTO v_booking_rec;
+            EXIT WHEN booking_details_cur%NOTFOUND;
+
+            DBMS_OUTPUT.PUT_LINE('  ' || v_booking_rec.flight_number || ': ' || 
+                                 v_booking_rec.origin || ' to ' || v_booking_rec.destination || 
+                                 ' on ' || TO_CHAR(v_booking_rec.booking_date, 'DD-MON-YYYY'));
+        END LOOP;
+        CLOSE booking_details_cur;
+
+        DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    END LOOP;
+    CLOSE member_cur;
+END;
+/

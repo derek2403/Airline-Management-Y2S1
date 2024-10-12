@@ -1,0 +1,38 @@
+-- Insert an airplane (Airbus A220)
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status) 
+VALUES ('A918', 'Airbus A220', 135, TO_DATE('2021-11-30', 'YYYY-MM-DD'), 'Active');
+
+-- Insert a completed flight linked to the airplane 'A918'
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) 
+VALUES ('F910', 'A918', 'FL910', SYSDATE - 5, SYSDATE - 4, 'City A', 'City B', 'Completed');
+
+-- Insert a passenger linked to a member (assumed 'Z001' is an existing member)
+INSERT INTO Passengers (passenger_id, member_id, name, email, phone, passport_number, nationality) 
+VALUES ('P910', 'Z001', 'JohnSW Doe', 'john.doe1@example.com', '9876543210', 'B12234567', 'USA');
+
+-- Insert a booking linked to the completed flight and passenger
+INSERT INTO Bookings (booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status) 
+VALUES ('B910', 'F910', 'P910', SYSDATE - 6, '12A', 'Confirmed', 'Paid');
+
+-- Insert an insurance policy for the booking
+INSERT INTO Insurance_Policies (policy_id, policy_type, coverage_amount, status) 
+VALUES ('PC91', 'Flight Insurance', 5000, 'Active');
+
+-- Update the insurance policy to reference the correct booking ID
+UPDATE Insurance_Policies 
+SET policy_id = 'B910' 
+WHERE policy_id = 'PC91';
+
+-- Execute the insurance claim procedure
+BEGIN
+    process_insurance_claim(
+        p_booking_id => 'B910',
+        p_claim_amount => 3000,
+        p_claim_description => 'Flight delay compensation'
+    );
+END;
+/
+
+-- Verify the inserted records for flights and claims
+SELECT * FROM Flights WHERE flight_id = (SELECT flight_id FROM Bookings WHERE booking_id = 'B910');
+SELECT * FROM Insurance_Claims WHERE booking_id = 'B910';

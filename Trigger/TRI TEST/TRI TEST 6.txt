@@ -1,0 +1,4 @@
+INSERT INTO Item_Purchases (purchase_id, booking_id, item_id, purchase_date, quantity)
+VALUES ('Q844', 'B123', 'I001', SYSDATE, 2);
+
+SELECT * FROM Payments WHERE booking_id = 'B123';

@@ -1,0 +1,68 @@
+SET SERVEROUTPUT ON;
+
+report 1
+BEGIN
+    flight_performance_summary(
+        p_start_date => DATE '2024-01-01',
+        p_end_date   => DATE '2024-09-30'
+    );
+END;
+/
+
+report 2
+BEGIN
+    maintenance_history(
+        p_start_date => DATE '2024-01-01',  
+        p_end_date   => DATE '2024-09-01'   
+    );
+END;
+/
+
+report 3
+BEGIN
+    member_loyalty_report(
+        p_start_date => DATE '2024-01-01',  
+        p_end_date   => DATE '2024-09-30'   
+    );
+END;
+/
+
+report 4
+BEGIN
+    staff_workload_report;
+END;
+/
+
+report 5
+BEGIN
+    booking_revenue_report;
+END;
+/
+
+report 6
+BEGIN
+      promotion_effectiveness_report('PM01');
+END;
+/
+
+QUERY1
+Z001,Z008
+
+2
+S001,2024-08-01,2024-09-30
+
+3
+F001
+
+4
+2024-01-01,2024-09-30
+
+5
+BA1001
+
+6
+F001
+2020-01-01,2024-09-30
+
+F002
+2010-01-01,2024-09-30

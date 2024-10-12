@@ -1,0 +1,52 @@
+CREATE OR REPLACE PROCEDURE staff_workload_report IS
+    CURSOR staff_cur IS
+        SELECT s.staff_id, s.name, s.position, COUNT(wa.allocation_id) AS total_assignments
+        FROM Staff s
+        LEFT JOIN Workload_Allocations wa ON s.staff_id = wa.staff_id
+        GROUP BY s.staff_id, s.name, s.position
+        ORDER BY total_assignments DESC;
+
+    CURSOR flight_assignments_cur(p_staff_id VARCHAR2) IS
+        SELECT f.flight_number, f.origin, f.destination, wa.role
+        FROM Workload_Allocations wa
+        JOIN Flights f ON wa.flight_id = f.flight_id
+        WHERE wa.staff_id = p_staff_id
+        AND wa.allocation_date >= TRUNC(SYSDATE) - 30  -- Last 30 days
+        ORDER BY f.departure_time;
+
+    v_staff_rec staff_cur%ROWTYPE;
+    v_assignment_rec flight_assignments_cur%ROWTYPE;
+    v_assignment_count NUMBER;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Staff Workload and Flight Assignment Analysis');
+    DBMS_OUTPUT.PUT_LINE('Period: Last 30 days');
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+
+    OPEN staff_cur;
+    LOOP
+        FETCH staff_cur INTO v_staff_rec;
+        EXIT WHEN staff_cur%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE('Staff: ' || v_staff_rec.name || ' (ID: ' || v_staff_rec.staff_id || ')');
+        DBMS_OUTPUT.PUT_LINE('Position: ' || v_staff_rec.position);
+        DBMS_OUTPUT.PUT_LINE('Total Assignments: ' || v_staff_rec.total_assignments);
+        DBMS_OUTPUT.PUT_LINE('Recent Flight Assignments:');
+
+        v_assignment_count := 0;
+        OPEN flight_assignments_cur(v_staff_rec.staff_id);
+        LOOP
+            FETCH flight_assignments_cur INTO v_assignment_rec;
+            EXIT WHEN flight_assignments_cur%NOTFOUND OR v_assignment_count >= 5;
+
+            DBMS_OUTPUT.PUT_LINE('  ' || v_assignment_rec.flight_number || ': ' || 
+                                 v_assignment_rec.origin || ' to ' || v_assignment_rec.destination || 
+                                 ' (' || v_assignment_rec.role || ')');
+            v_assignment_count := v_assignment_count + 1;
+        END LOOP;
+        CLOSE flight_assignments_cur;
+
+        DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    END LOOP;
+    CLOSE staff_cur;
+END;
+/

@@ -1,0 +1,30 @@
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status) VALUES ('A860', 'Airbus A220', 135, TO_DATE('2021-11-30', 'YYYY-MM-DD'), 'Active');
+
+-- Insert a flight
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) 
+VALUES ('F860','A860', 'FL860', SYSDATE + 1, SYSDATE + 2, 'City A', 'City B', 'Scheduled');
+
+
+-- Insert a member with total trips suitable for testing promotion eligibility
+INSERT INTO Members (member_id, name, email, phone, address, date_of_birth, membership_date, total_trips) 
+VALUES ('M860', 'Jane Doe', 'jane.doe@example.com', '9876543210', '456 Oak St', TO_DATE('1990-02-15', 'YYYY-MM-DD'), SYSDATE - 100, 9);
+
+
+-- Insert a passenger linked to a member
+INSERT INTO Passengers (passenger_id, member_id, name, email, phone, passport_number, nationality) 
+VALUES ('P860', 'M860', 'Jane Doe', 'jane.doe@example.com', '9876543210', 'B1234567', 'USA');
+
+
+-- Insert a promotion
+INSERT INTO Promotions (promotion_id, name, start_date, end_date, discount_percentage, status, minimum_trips_required) 
+VALUES ('PM19', 'Autumn Special', SYSDATE - 30, SYSDATE + 30, 15, 'Active', 1);
+-- Test the procedure with consistent '860' keys
+BEGIN
+    book_flight_with_promotion('F860', 'P860', '18C', 'PM19');  
+END;
+/
+
+
+SELECT * FROM Bookings WHERE passenger_id = 'P860';
+SELECT * FROM Promotion_Applications WHERE promotion_id = 'PM19' AND booking_id IN (SELECT booking_id FROM Bookings WHERE passenger_id = 'P860');
+SELECT total_trips FROM Members WHERE member_id = 'M860';

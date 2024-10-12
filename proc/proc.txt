@@ -1,0 +1,344 @@
+CREATE OR REPLACE PROCEDURE book_flight_with_promotion (
+    p_flight_id IN Flights.flight_id%TYPE,
+    p_passenger_id IN Passengers.passenger_id%TYPE,
+    p_seat_number IN Bookings.seat_number%TYPE,
+    p_promotion_id IN Promotions.promotion_id%TYPE
+) AS
+    v_booking_id Bookings.booking_id%TYPE;
+    v_member_id Members.member_id%TYPE;
+    v_total_trips Members.total_trips%TYPE;
+    v_discount_percentage Promotions.discount_percentage%TYPE;
+    v_minimum_trips Promotions.minimum_trips_required%TYPE;
+    v_base_price NUMBER := 1000; 
+    v_final_price NUMBER;
+BEGIN
+    -- Get member_id and total_trips
+    SELECT member_id INTO v_member_id
+    FROM Passengers
+    WHERE passenger_id = p_passenger_id;
+
+    SELECT total_trips INTO v_total_trips
+    FROM Members
+    WHERE member_id = v_member_id;
+
+    -- Check promotion eligibility
+    SELECT discount_percentage, minimum_trips_required 
+    INTO v_discount_percentage, v_minimum_trips
+    FROM Promotions
+    WHERE promotion_id = p_promotion_id AND SYSDATE BETWEEN start_date AND end_date;
+
+    IF v_total_trips < v_minimum_trips THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Passenger does not meet the minimum trips requirement for this promotion');
+    END IF;
+
+    -- Calculate final price
+    v_final_price := v_base_price * (1 - v_discount_percentage / 100);
+
+    -- Create booking
+    INSERT INTO Bookings (
+        booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status
+    )
+    VALUES (
+        booking_seq.NEXTVAL, p_flight_id, p_passenger_id, SYSDATE, p_seat_number, 'Confirmed', 'Pending'
+    )
+    RETURNING booking_id INTO v_booking_id;
+
+    -- Apply promotion
+    INSERT INTO Promotion_Applications (
+        application_id, promotion_id, booking_id, application_date, discount_amount
+    )
+    VALUES (
+        seq_promotion_applications.NEXTVAL, p_promotion_id, v_booking_id, SYSDATE, v_base_price - v_final_price
+    );
+
+    -- Update member's total trips
+    UPDATE Members
+    SET total_trips = total_trips + 1
+    WHERE member_id = v_member_id;
+
+    COMMIT;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20002, 'Invalid flight, passenger, or promotion ID');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+CREATE OR REPLACE PROCEDURE assign_staff_to_flight (
+    p_flight_id IN Flights.flight_id%TYPE
+) AS
+    CURSOR c_required_roles IS
+        SELECT 'Pilot' AS role FROM DUAL
+        UNION ALL
+        SELECT 'Co-Pilot' FROM DUAL
+        UNION ALL
+        SELECT 'Flight Attendant' FROM DUAL
+        UNION ALL
+        SELECT 'Flight Attendant' FROM DUAL;
+
+    CURSOR c_available_staff (p_role IN VARCHAR2) IS
+        SELECT s.staff_id, COUNT(wa.allocation_id) AS current_workload, s.hire_date
+        FROM Staff s
+        LEFT JOIN Workload_Allocations wa ON s.staff_id = wa.staff_id
+            AND wa.allocation_date BETWEEN TRUNC(SYSDATE) AND TRUNC(SYSDATE + 7)
+        WHERE s.position = p_role
+        GROUP BY s.staff_id, s.hire_date
+        ORDER BY current_workload ASC, s.hire_date ASC;
+
+    v_staff_id Staff.staff_id%TYPE;
+    v_workload NUMBER;
+    v_hire_date DATE; -- New variable to store hire_date
+BEGIN
+    FOR role_rec IN c_required_roles LOOP
+        OPEN c_available_staff(role_rec.role);
+        FETCH c_available_staff INTO v_staff_id, v_workload, v_hire_date; -- Updated FETCH statement
+        
+        IF c_available_staff%NOTFOUND THEN
+            RAISE_APPLICATION_ERROR(-20003, 'No available ' || role_rec.role || ' found');
+        END IF;
+
+        INSERT INTO Workload_Allocations (
+            allocation_id, staff_id, flight_id, role, allocation_date
+        )
+        VALUES (
+            workload_allocation_seq.NEXTVAL, v_staff_id, p_flight_id, role_rec.role, SYSDATE
+        );
+
+        CLOSE c_available_staff;
+    END LOOP;
+
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+CREATE OR REPLACE PROCEDURE process_maintenance_task (
+    p_airplane_id IN Airplanes.airplane_id%TYPE,
+    p_maintenance_id IN Maintenance.maintenance_id%TYPE,
+    p_part_id IN Maintenance_Parts.part_id%TYPE
+) AS
+    v_part_cost Maintenance_Parts.cost%TYPE;
+    v_airplane_status Airplanes.status%TYPE;
+BEGIN
+    -- Check airplane status
+    SELECT status INTO v_airplane_status
+    FROM Airplanes
+    WHERE airplane_id = p_airplane_id;
+
+    IF v_airplane_status != 'Grounded' THEN
+        RAISE_APPLICATION_ERROR(-20004, 'Airplane must be grounded for maintenance');
+    END IF;
+
+    -- Get part cost
+    SELECT cost INTO v_part_cost
+    FROM Maintenance_Parts
+    WHERE part_id = p_part_id;
+
+    -- Create maintenance task
+    INSERT INTO Maintenance_Tasks (
+        maintenance_task_id, maintenance_id, airplane_id, part_id, maintenance_date, status
+    )
+    VALUES (
+        maintenance_task_seq.NEXTVAL, p_maintenance_id, p_airplane_id, p_part_id, SYSDATE, 'In Progress'
+    );
+
+    -- Update part status and replacement date
+    UPDATE Maintenance_Parts
+    SET status = 'In Use', replacement_date = SYSDATE
+    WHERE part_id = p_part_id;
+
+    -- Update airplane status to 'Maintenance' (shortened to fit within 12 characters)
+    UPDATE Airplanes
+    SET status = 'Maintenance'
+    WHERE airplane_id = p_airplane_id;
+
+    COMMIT;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20005, 'Invalid airplane, maintenance, or part ID');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+CREATE OR REPLACE PROCEDURE process_insurance_claim (
+    p_booking_id IN Bookings.booking_id%TYPE,
+    p_claim_amount IN Insurance_Claims.amount%TYPE,
+    p_claim_description IN VARCHAR2
+) AS
+    v_policy_id Insurance_Policies.policy_id%TYPE;
+    v_coverage_amount Insurance_Policies.coverage_amount%TYPE;
+    v_flight_id Flights.flight_id%TYPE;
+    v_flight_status Flights.status%TYPE;
+BEGIN
+    -- Get policy ID and coverage amount
+    SELECT ip.policy_id, ip.coverage_amount, b.flight_id
+    INTO v_policy_id, v_coverage_amount, v_flight_id
+    FROM Bookings b
+    JOIN Insurance_Policies ip ON b.booking_id = ip.policy_id -- Assuming a 1:1 relationship between booking and policy
+    WHERE b.booking_id = p_booking_id;
+
+    -- Check flight status
+    SELECT status INTO v_flight_status
+    FROM Flights
+    WHERE flight_id = v_flight_id;
+
+    IF v_flight_status != 'Completed' THEN
+        RAISE_APPLICATION_ERROR(-20006, 'Insurance claim can only be processed for completed flights');
+    END IF;
+
+    -- Validate claim amount
+    IF p_claim_amount > v_coverage_amount THEN
+        RAISE_APPLICATION_ERROR(-20007, 'Claim amount exceeds coverage amount');
+    END IF;
+
+    -- Create insurance claim
+    INSERT INTO Insurance_Claims (
+        claim_id, policy_id, booking_id, claim_date, amount, status
+    ) VALUES (
+        insurance_claim_seq.NEXTVAL, v_policy_id, p_booking_id, SYSDATE, p_claim_amount, 'Pending'
+    );
+
+    COMMIT;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20008, 'Invalid booking ID or no associated insurance policy found');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+CREATE OR REPLACE PROCEDURE create_dynamic_promotion (
+    p_name IN Promotions.name%TYPE,
+    p_start_date IN Promotions.start_date%TYPE,
+    p_end_date IN Promotions.end_date%TYPE,
+    p_base_discount IN NUMBER,
+    p_max_discount IN NUMBER
+) AS
+    v_current_bookings NUMBER := 0;
+    v_total_capacity NUMBER := 0;
+    v_occupancy_rate NUMBER := 0;
+    v_dynamic_discount NUMBER;
+BEGIN
+    -- Calculate current occupancy rate
+    SELECT COALESCE(SUM(a.capacity), 0), COALESCE(COUNT(b.booking_id), 0)
+    INTO v_total_capacity, v_current_bookings
+    FROM Flights f
+    JOIN Airplanes a ON f.airplane_id = a.airplane_id
+    LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+    WHERE f.departure_time BETWEEN p_start_date AND p_end_date;
+
+    -- Handle case where total_capacity is zero to avoid division by zero
+    IF v_total_capacity = 0 THEN
+        v_occupancy_rate := 0;
+    ELSE
+        v_occupancy_rate := v_current_bookings / v_total_capacity;
+    END IF;
+
+    -- Calculate dynamic discount
+    v_dynamic_discount := p_base_discount + (1 - v_occupancy_rate) * (p_max_discount - p_base_discount);
+
+    -- Create promotion
+    INSERT INTO Promotions (
+        promotion_id, name, start_date, end_date, discount_percentage, status, minimum_trips_required
+    ) VALUES (
+        promotion_seq.NEXTVAL, p_name, p_start_date, p_end_date, v_dynamic_discount, 'Active', 0
+    );
+
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+CREATE OR REPLACE PROCEDURE generate_member_newsletter (
+    p_member_id IN Members.member_id%TYPE
+) AS
+    v_member_name Members.name%TYPE;
+    v_total_trips Members.total_trips%TYPE;
+    v_last_flight_date DATE;
+    v_recommended_destination Flights.destination%TYPE;
+    v_newsletter_content CLOB;
+
+    CURSOR c_recent_promotions IS
+        SELECT name, discount_percentage, start_date, end_date
+        FROM (
+            SELECT name, discount_percentage, start_date, end_date
+            FROM Promotions
+            WHERE start_date > SYSDATE
+            ORDER BY start_date ASC
+        )
+        WHERE ROWNUM <= 3;
+BEGIN
+    -- Get member details
+    SELECT name, total_trips
+    INTO v_member_name, v_total_trips
+    FROM Members
+    WHERE member_id = p_member_id;
+
+    -- Get last flight date
+    SELECT MAX(f.arrival_time)
+    INTO v_last_flight_date
+    FROM Bookings b
+    JOIN Flights f ON b.flight_id = f.flight_id
+    JOIN Passengers p ON b.passenger_id = p.passenger_id
+    WHERE p.member_id = p_member_id;
+
+    -- Get recommended destination (most popular in the last month)
+    BEGIN
+        SELECT destination
+        INTO v_recommended_destination
+        FROM (
+            SELECT f.destination, COUNT(*) AS popularity
+            FROM Flights f
+            JOIN Bookings b ON f.flight_id = b.flight_id
+            WHERE f.departure_time > SYSDATE - INTERVAL '30' DAY
+            GROUP BY f.destination
+            ORDER BY popularity DESC
+        )
+        WHERE ROWNUM = 1;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_recommended_destination := 'N/A'; -- Default value if no data is found
+    END;
+
+    -- Generate newsletter content
+    v_newsletter_content := 'To: ' || p_member_id || '@example.com' || CHR(10) ||
+                            'Subject: Your Personalized Travel Newsletter' || CHR(10) || CHR(10) ||
+                            'Dear ' || v_member_name || ',' || CHR(10) || CHR(10) ||
+                            'We hope this newsletter finds you well. Here''s a summary of your recent activity and some exciting offers:' || CHR(10) || CHR(10) ||
+                            'Total Trips: ' || v_total_trips || CHR(10) ||
+                            'Last Flight: ' || TO_CHAR(v_last_flight_date, 'DD-MON-YYYY') || CHR(10) || CHR(10) ||
+                            'Based on your travel history, we think you might enjoy visiting ' || v_recommended_destination || ' for your next trip!' || CHR(10) || CHR(10) ||
+                            'Upcoming Promotions:';
+
+    -- Add recent promotions to the newsletter
+    FOR promo IN c_recent_promotions LOOP
+        v_newsletter_content := v_newsletter_content || CHR(10) ||
+            '- ' || promo.name || ': ' || promo.discount_percentage || '% off (Valid from ' ||
+            TO_CHAR(promo.start_date, 'DD-MON-YYYY') || ' to ' || TO_CHAR(promo.end_date, 'DD-MON-YYYY') || ')';
+    END LOOP;
+
+    v_newsletter_content := v_newsletter_content || CHR(10) || CHR(10) ||
+                            'Thank you for choosing our airline. We look forward to seeing you on board soon!' || CHR(10) || CHR(10) ||
+                            'Best regards,' || CHR(10) ||
+                            'Your Airline Team';
+
+    -- Print newsletter content
+    DBMS_OUTPUT.PUT_LINE(v_newsletter_content);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20009, 'Invalid member ID or no flight history found');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/

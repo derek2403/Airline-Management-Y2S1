@@ -1,0 +1,48 @@
+CREATE OR REPLACE PROCEDURE process_insurance_claim (
+    p_booking_id IN Bookings.booking_id%TYPE,
+    p_claim_amount IN Insurance_Claims.amount%TYPE,
+    p_claim_description IN VARCHAR2
+) AS
+    v_policy_id Insurance_Policies.policy_id%TYPE;
+    v_coverage_amount Insurance_Policies.coverage_amount%TYPE;
+    v_flight_id Flights.flight_id%TYPE;
+    v_flight_status Flights.status%TYPE;
+BEGIN
+    -- Get policy ID and coverage amount
+    SELECT ip.policy_id, ip.coverage_amount, b.flight_id
+    INTO v_policy_id, v_coverage_amount, v_flight_id
+    FROM Bookings b
+    JOIN Insurance_Policies ip ON b.booking_id = ip.policy_id -- Assuming a 1:1 relationship between booking and policy
+    WHERE b.booking_id = p_booking_id;
+
+    -- Check flight status
+    SELECT status INTO v_flight_status
+    FROM Flights
+    WHERE flight_id = v_flight_id;
+
+    IF v_flight_status != 'Completed' THEN
+        RAISE_APPLICATION_ERROR(-20006, 'Insurance claim can only be processed for completed flights');
+    END IF;
+
+    -- Validate claim amount
+    IF p_claim_amount > v_coverage_amount THEN
+        RAISE_APPLICATION_ERROR(-20007, 'Claim amount exceeds coverage amount');
+    END IF;
+
+    -- Create insurance claim
+    INSERT INTO Insurance_Claims (
+        claim_id, policy_id, booking_id, claim_date, amount, status
+    ) VALUES (
+        insurance_claim_seq.NEXTVAL, v_policy_id, p_booking_id, SYSDATE, p_claim_amount, 'Pending'
+    );
+
+    COMMIT;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20008, 'Invalid booking ID or no associated insurance policy found');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/

@@ -1,0 +1,56 @@
+ACCEPT start_date PROMPT 'Enter Start Date (YYYY-MM-DD): '
+ACCEPT end_date PROMPT 'Enter End Date (YYYY-MM-DD): '
+
+COLUMN flight_number FORMAT A15 HEADING 'Flight Number'
+COLUMN departure_time FORMAT A20 HEADING 'Departure Time'
+COLUMN passenger_name FORMAT A20 HEADING 'Passenger Name'
+COLUMN policy_type FORMAT A15 HEADING 'Policy Type'
+COLUMN coverage_amount FORMAT 999,999.99 HEADING 'Coverage Amount'
+COLUMN claim_amount FORMAT 999,999.99 HEADING 'Claim Amount'
+COLUMN claim_status FORMAT A15 HEADING 'Claim Status'
+
+TTITLE CENTER 'Insurance Policy and Claim Analysis' SKIP 1 -
+       CENTER 'Period: &start_date to &end_date' SKIP 1
+
+SELECT 
+    f.flight_number,
+    TO_CHAR(f.departure_time, 'YYYY-MM-DD HH24:MI:SS') AS departure_time,
+    p.name AS passenger_name,
+    ip.policy_type,
+    ip.coverage_amount,
+    ic.amount AS claim_amount,
+    ic.status AS claim_status
+FROM 
+    Flights f
+    JOIN Bookings b ON f.flight_id = b.flight_id
+    JOIN Passengers p ON b.passenger_id = p.passenger_id
+    LEFT JOIN Insurance_Claims ic ON b.booking_id = ic.booking_id
+    LEFT JOIN Insurance_Policies ip ON ic.policy_id = ip.policy_id
+WHERE 
+    f.departure_time BETWEEN TO_DATE('&start_date', 'YYYY-MM-DD') AND TO_DATE('&end_date', 'YYYY-MM-DD')
+ORDER BY 
+    f.departure_time, p.name;
+
+BREAK ON REPORT
+COMPUTE SUM LABEL 'Total' OF coverage_amount claim_amount ON REPORT
+COMPUTE COUNT LABEL 'Total Policies' OF policy_type ON REPORT
+COMPUTE COUNT LABEL 'Total Claims' OF claim_amount ON REPORT
+
+SELECT 
+    'Summary' AS summary,
+    COUNT(DISTINCT ip.policy_id) AS total_policies_sold,
+    SUM(ip.coverage_amount) AS total_coverage_amount,
+    COUNT(DISTINCT ic.claim_id) AS total_claims,
+    SUM(ic.amount) AS total_claim_amount,
+    AVG(ic.amount) AS avg_claim_amount
+FROM 
+    Flights f
+    JOIN Bookings b ON f.flight_id = b.flight_id
+    LEFT JOIN Insurance_Claims ic ON b.booking_id = ic.booking_id
+    LEFT JOIN Insurance_Policies ip ON ic.policy_id = ip.policy_id
+WHERE 
+    f.departure_time BETWEEN TO_DATE('&start_date', 'YYYY-MM-DD') AND TO_DATE('&end_date', 'YYYY-MM-DD');
+
+CLEAR COLUMNS
+CLEAR BREAKS
+TTITLE OFF

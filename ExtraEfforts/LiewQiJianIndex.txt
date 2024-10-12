@@ -1,0 +1,30 @@
+CREATE INDEX idx_flights_departure_time ON Flights (departure_time);
+CREATE INDEX idx_bookings_flight_status ON Bookings (flight_id, status);
+CREATE OR REPLACE PROCEDURE generate_flight_report (
+    p_start_date IN DATE,
+    p_end_date IN DATE
+) AS
+BEGIN
+    FOR flight_rec IN (
+        SELECT f.flight_number, f.departure_time, f.origin, f.destination,
+               COUNT(b.booking_id) AS confirmed_bookings
+        FROM Flights f
+        LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+        WHERE f.departure_time BETWEEN p_start_date AND p_end_date
+          AND b.status = 'Confirmed'
+        GROUP BY f.flight_number, f.departure_time, f.origin, f.destination
+        ORDER BY f.departure_time
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE('Flight: ' || flight_rec.flight_number || 
+                             ' | Departure: ' || TO_CHAR(flight_rec.departure_time, 'DD-MON-YYYY HH24:MI') || 
+                             ' | Origin: ' || flight_rec.origin || 
+                             ' | Destination: ' || flight_rec.destination || 
+                             ' | Confirmed Bookings: ' || flight_rec.confirmed_bookings);
+    END LOOP;
+END;
+/
+
+BEGIN
+    generate_flight_report(TO_DATE('2024-09-01', 'YYYY-MM-DD'), TO_DATE('2024-09-30', 'YYYY-MM-DD'));
+END;
+/

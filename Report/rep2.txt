@@ -1,0 +1,73 @@
+CREATE OR REPLACE PROCEDURE maintenance_history(
+    p_start_date DATE,
+    p_end_date DATE
+) IS
+    CURSOR airplane_cursor IS
+        SELECT DISTINCT a.airplane_id, a.model
+        FROM Airplanes a
+        JOIN Maintenance_Tasks mt ON a.airplane_id = mt.airplane_id
+        WHERE mt.maintenance_date BETWEEN p_start_date AND p_end_date
+        ORDER BY a.airplane_id;
+
+    CURSOR maintenance_cursor (p_airplane_id VARCHAR2) IS
+        SELECT mt.maintenance_task_id, m.description, mt.maintenance_date, mt.status,
+               mp.name AS part_name, mp.replacement_date, mp.cost
+        FROM Maintenance_Tasks mt
+        JOIN Maintenance m ON mt.maintenance_id = m.maintenance_id
+        LEFT JOIN Maintenance_Parts mp ON mt.part_id = mp.part_id
+        WHERE mt.airplane_id = p_airplane_id
+          AND mt.maintenance_date BETWEEN p_start_date AND p_end_date
+        ORDER BY mt.maintenance_date;
+
+    v_total_maintenance_cost NUMBER := 0;
+    v_airplane_maintenance_cost NUMBER := 0;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Detailed Maintenance History Report');
+    DBMS_OUTPUT.PUT_LINE('Period: ' || TO_CHAR(p_start_date, 'DD-MON-YYYY') || ' to ' || TO_CHAR(p_end_date, 'DD-MON-YYYY'));
+    DBMS_OUTPUT.PUT_LINE('--------------------------------------------');
+
+    FOR airplane_rec IN airplane_cursor LOOP
+        DBMS_OUTPUT.PUT_LINE('Airplane: ' || airplane_rec.airplane_id || ' (' || airplane_rec.model || ')');
+        v_airplane_maintenance_cost := 0;
+
+        FOR maintenance_rec IN maintenance_cursor(airplane_rec.airplane_id) LOOP
+            DBMS_OUTPUT.PUT_LINE('  Maintenance Task: ' || maintenance_rec.maintenance_task_id);
+            DBMS_OUTPUT.PUT_LINE('    Description: ' || maintenance_rec.description);
+            DBMS_OUTPUT.PUT_LINE('    Date: ' || TO_CHAR(maintenance_rec.maintenance_date, 'DD-MON-YYYY'));
+            DBMS_OUTPUT.PUT_LINE('    Status: ' || maintenance_rec.status);
+            
+            IF maintenance_rec.part_name IS NOT NULL THEN
+                DBMS_OUTPUT.PUT_LINE('    Part Replaced: ' || maintenance_rec.part_name);
+                DBMS_OUTPUT.PUT_LINE('    Replacement Date: ' || TO_CHAR(maintenance_rec.replacement_date, 'DD-MON-YYYY'));
+                DBMS_OUTPUT.PUT_LINE('    Cost: $' || TO_CHAR(maintenance_rec.cost, '999,999.99'));
+                
+                v_airplane_maintenance_cost := v_airplane_maintenance_cost + NVL(maintenance_rec.cost, 0);
+            END IF;
+            
+            DBMS_OUTPUT.PUT_LINE('  ----------------------------------------');
+        END LOOP;
+
+        DBMS_OUTPUT.PUT_LINE('  Total Maintenance Cost for ' || airplane_rec.airplane_id || ': $' || TO_CHAR(v_airplane_maintenance_cost, '999,999.99'));
+        DBMS_OUTPUT.PUT_LINE('--------------------------------------------');
+
+        v_total_maintenance_cost := v_total_maintenance_cost + v_airplane_maintenance_cost;
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('Overall Maintenance Summary:');
+    DBMS_OUTPUT.PUT_LINE('  Total Maintenance Cost: $' || TO_CHAR(v_total_maintenance_cost, '999,999.99'));
+
+    -- Calculate average maintenance cost per airplane
+    DECLARE
+        v_airplane_count NUMBER;
+    BEGIN
+        SELECT COUNT(DISTINCT airplane_id) INTO v_airplane_count
+        FROM Maintenance_Tasks
+        WHERE maintenance_date BETWEEN p_start_date AND p_end_date;
+
+        IF v_airplane_count > 0 THEN
+            DBMS_OUTPUT.PUT_LINE('  Average Maintenance Cost per Airplane: $' || 
+                TO_CHAR(v_total_maintenance_cost / v_airplane_count, '999,999.99'));
+        END IF;
+    END;
+END;
+/

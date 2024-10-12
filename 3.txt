@@ -1,0 +1,538 @@
+SELECT 
+    m.name AS member_name,
+    m.email,
+    COUNT(DISTINCT b.flight_id) AS total_flights,
+    SUM(p.amount) AS total_spent,
+    AVG(p.amount) AS avg_spent_per_flight,
+    TO_CHAR(MAX(f.departure_time), 'YYYY-MM-DD HH24:MI:SS') AS last_flight_date,
+    CASE 
+        WHEN COUNT(DISTINCT b.flight_id) >= 10 AND SUM(p.amount) >= 5000 THEN 'Eligible for Gold Status'
+        WHEN COUNT(DISTINCT b.flight_id) >= 5 AND SUM(p.amount) >= 2500 THEN 'Eligible for Silver Status'
+        ELSE 'Standard Member'
+    END AS membership_status
+FROM 
+    Members m
+    JOIN Passengers pas ON m.member_id = pas.member_id
+    JOIN Bookings b ON pas.passenger_id = b.passenger_id
+    JOIN Flights f ON b.flight_id = f.flight_id
+    JOIN Payments p ON b.booking_id = p.booking_id
+WHERE 
+    m.member_id = '&member_id'
+GROUP BY 
+    m.member_id, m.name, m.email;
+
+SELECT 
+    s.name AS staff_name,
+    s.position,
+    COUNT(DISTINCT wa.flight_id) AS total_flights_assigned,
+    AVG(b.passengers_count) AS avg_passengers,
+    (CAST(SUM(CASE WHEN f.status IN ('On Time', 'Delayed') THEN 1 ELSE 0 END) AS FLOAT) / 
+     CAST(COUNT(*) AS FLOAT)) * 100 AS flight_completion_rate
+FROM 
+    Staff s
+    JOIN Workload_Allocations wa ON s.staff_id = wa.staff_id
+    JOIN Flights f ON wa.flight_id = f.flight_id
+    LEFT JOIN (
+        SELECT flight_id, COUNT(*) AS passengers_count
+        FROM Bookings
+        GROUP BY flight_id
+    ) b ON f.flight_id = b.flight_id
+WHERE 
+    s.staff_id = '&staff_id'
+    AND f.departure_time BETWEEN TO_DATE('&start_date', 'YYYY-MM-DD') AND TO_DATE('&end_date', 'YYYY-MM-DD')
+GROUP BY 
+    s.staff_id, s.name, s.position;
+
+CREATE OR REPLACE PROCEDURE book_flight_with_promotion (
+    p_flight_id IN Flights.flight_id%TYPE,
+    p_passenger_id IN Passengers.passenger_id%TYPE,
+    p_seat_number IN Bookings.seat_number%TYPE,
+    p_promotion_id IN Promotions.promotion_id%TYPE
+) AS
+    v_booking_id Bookings.booking_id%TYPE;
+    v_member_id Members.member_id%TYPE;
+    v_total_trips Members.total_trips%TYPE;
+    v_discount_percentage Promotions.discount_percentage%TYPE;
+    v_minimum_trips Promotions.minimum_trips_required%TYPE;
+    v_base_price NUMBER := 1000; 
+    v_final_price NUMBER;
+BEGIN
+    -- Get member_id and total_trips
+    SELECT member_id INTO v_member_id
+    FROM Passengers
+    WHERE passenger_id = p_passenger_id;
+
+    SELECT total_trips INTO v_total_trips
+    FROM Members
+    WHERE member_id = v_member_id;
+
+    -- Check promotion eligibility
+    SELECT discount_percentage, minimum_trips_required 
+    INTO v_discount_percentage, v_minimum_trips
+    FROM Promotions
+    WHERE promotion_id = p_promotion_id AND SYSDATE BETWEEN start_date AND end_date;
+
+    IF v_total_trips < v_minimum_trips THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Passenger does not meet the minimum trips requirement for this promotion');
+    END IF;
+
+    -- Calculate final price
+    v_final_price := v_base_price * (1 - v_discount_percentage / 100);
+
+    -- Create booking
+    INSERT INTO Bookings (
+        booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status
+    )
+    VALUES (
+        booking_seq.NEXTVAL, p_flight_id, p_passenger_id, SYSDATE, p_seat_number, 'Confirmed', 'Pending'
+    )
+    RETURNING booking_id INTO v_booking_id;
+
+    -- Apply promotion
+    INSERT INTO Promotion_Applications (
+        application_id, promotion_id, booking_id, application_date, discount_amount
+    )
+    VALUES (
+        seq_promotion_applications.NEXTVAL, p_promotion_id, v_booking_id, SYSDATE, v_base_price - v_final_price
+    );
+
+    -- Update member's total trips
+    UPDATE Members
+    SET total_trips = total_trips + 1
+    WHERE member_id = v_member_id;
+
+    COMMIT;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20002, 'Invalid flight, passenger, or promotion ID');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+
+CREATE OR REPLACE PROCEDURE assign_staff_to_flight (
+    p_flight_id IN Flights.flight_id%TYPE
+) AS
+    CURSOR c_required_roles IS
+        SELECT 'Pilot' AS role FROM DUAL
+        UNION ALL
+        SELECT 'Co-Pilot' FROM DUAL
+        UNION ALL
+        SELECT 'Flight Attendant' FROM DUAL
+        UNION ALL
+        SELECT 'Flight Attendant' FROM DUAL;
+
+    CURSOR c_available_staff (p_role IN VARCHAR2) IS
+        SELECT s.staff_id, COUNT(wa.allocation_id) AS current_workload, s.hire_date
+        FROM Staff s
+        LEFT JOIN Workload_Allocations wa ON s.staff_id = wa.staff_id
+            AND wa.allocation_date BETWEEN TRUNC(SYSDATE) AND TRUNC(SYSDATE + 7)
+        WHERE s.position = p_role
+        GROUP BY s.staff_id, s.hire_date
+        ORDER BY current_workload ASC, s.hire_date ASC;
+
+    v_staff_id Staff.staff_id%TYPE;
+    v_workload NUMBER;
+    v_hire_date DATE; -- New variable to store hire_date
+BEGIN
+    FOR role_rec IN c_required_roles LOOP
+        OPEN c_available_staff(role_rec.role);
+        FETCH c_available_staff INTO v_staff_id, v_workload, v_hire_date; -- Updated FETCH statement
+        
+        IF c_available_staff%NOTFOUND THEN
+            RAISE_APPLICATION_ERROR(-20003, 'No available ' || role_rec.role || ' found');
+        END IF;
+
+        INSERT INTO Workload_Allocations (
+            allocation_id, staff_id, flight_id, role, allocation_date
+        )
+        VALUES (
+            workload_allocation_seq.NEXTVAL, v_staff_id, p_flight_id, role_rec.role, SYSDATE
+        );
+
+        CLOSE c_available_staff;
+    END LOOP;
+
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+
+CREATE OR REPLACE TRIGGER trg_update_member_trips
+AFTER INSERT ON Bookings
+FOR EACH ROW
+DECLARE
+    v_total_trips NUMBER;
+    v_member_id VARCHAR2(5);
+    v_eligible_promotion_id VARCHAR2(5);
+    v_discount_percentage NUMBER;
+    v_discount_amount NUMBER;
+BEGIN
+    -- Get member_id from Passengers table
+    SELECT member_id INTO v_member_id
+    FROM Passengers
+    WHERE passenger_id = :NEW.passenger_id;
+
+    -- Update total_trips for the member
+    UPDATE Members
+    SET total_trips = total_trips + 1
+    WHERE member_id = v_member_id
+    RETURNING total_trips INTO v_total_trips;
+
+    -- Check for eligible promotions
+    BEGIN
+        SELECT promotion_id, discount_percentage
+        INTO v_eligible_promotion_id, v_discount_percentage
+        FROM Promotions
+        WHERE status = 'ACTIVE'
+        AND start_date <= SYSDATE
+        AND end_date >= SYSDATE
+        AND minimum_trips_required <= v_total_trips
+        AND ROWNUM = 1
+        ORDER BY discount_percentage DESC;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_eligible_promotion_id := NULL;
+            v_discount_percentage := 0;
+    END;
+
+    -- If eligible promotion found, apply it
+    IF v_eligible_promotion_id IS NOT NULL THEN
+        -- Calculate discount amount (assume a base fare of 1000 for simplicity)
+        v_discount_amount := 1000 * (v_discount_percentage / 100);
+
+        -- Insert into Promotion_Applications
+        INSERT INTO Promotion_Applications (
+            application_id,
+            promotion_id,
+            booking_id,
+            application_date,
+            discount_amount
+        ) VALUES (
+            'N' || LPAD(seq_promotion_applications.NEXTVAL, 3, '0'),  -- Prefixing with 'N'
+            v_eligible_promotion_id,
+            :NEW.booking_id,
+            SYSDATE,
+            v_discount_amount
+        );
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER trg_enforce_capacity
+BEFORE INSERT OR UPDATE ON Bookings
+FOR EACH ROW
+DECLARE
+    v_capacity NUMBER;
+    v_booked_seats NUMBER;
+BEGIN
+    -- Get the capacity of the airplane assigned to the flight
+    SELECT a.capacity
+    INTO v_capacity
+    FROM Airplanes a
+    JOIN Flights f ON a.airplane_id = f.airplane_id
+    WHERE f.flight_id = :NEW.flight_id;
+
+    -- Count the number of bookings for this flight, excluding cancelled bookings
+    SELECT COUNT(*)
+    INTO v_booked_seats
+    FROM Bookings
+    WHERE flight_id = :NEW.flight_id
+    AND status != 'CANCELLED';
+
+    -- If it's an update and the status is changing to 'CANCELLED', don't count this booking
+    IF UPDATING AND :OLD.status = 'CONFIRMED' AND :NEW.status = 'CANCELLED' THEN
+        v_booked_seats := v_booked_seats - 1;
+    ELSIF INSERTING THEN
+        -- For new bookings, increment the booked seats count
+        v_booked_seats := v_booked_seats + 1;
+    END IF;
+
+    -- Check if adding this booking would exceed the capacity
+    IF v_booked_seats > v_capacity THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Flight is fully booked. Cannot add more passengers.');
+    END IF;
+END;
+/
+
+CREATE OR REPLACE PROCEDURE flight_performance_summary(
+    p_start_date DATE,
+    p_end_date DATE
+) IS
+    CURSOR flight_summary_cursor IS
+        SELECT f.airplane_id, a.model, 
+               COUNT(*) AS total_flights,
+               AVG((f.arrival_time - f.departure_time) * 24 * 60 * 60) AS avg_flight_duration,  -- in seconds
+               SUM(CASE WHEN f.status = 'Delayed' THEN 1 ELSE 0 END) AS delayed_flights,
+               SUM(CASE WHEN f.status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelled_flights
+        FROM Flights f
+        JOIN Airplanes a ON f.airplane_id = a.airplane_id
+        WHERE f.departure_time BETWEEN p_start_date AND p_end_date
+        GROUP BY f.airplane_id, a.model;
+
+    CURSOR route_performance_cursor (p_airplane_id VARCHAR2) IS
+        SELECT f.origin, f.destination, 
+               COUNT(*) AS route_flights,
+               AVG((f.arrival_time - f.departure_time) * 24 * 60 * 60) AS avg_route_duration,  -- in seconds
+               SUM(CASE WHEN f.status = 'Delayed' THEN 1 ELSE 0 END) AS route_delayed_flights
+        FROM Flights f
+        WHERE f.airplane_id = p_airplane_id
+          AND f.departure_time BETWEEN p_start_date AND p_end_date
+        GROUP BY f.origin, f.destination;
+
+    v_total_flights NUMBER := 0;
+    v_total_delayed NUMBER := 0;
+    v_total_cancelled NUMBER := 0;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Flight Performance Summary Report');
+    DBMS_OUTPUT.PUT_LINE('Period: ' || TO_CHAR(p_start_date, 'DD-MON-YYYY') || ' to ' || TO_CHAR(p_end_date, 'DD-MON-YYYY'));
+    DBMS_OUTPUT.PUT_LINE('--------------------------------------------');
+
+    FOR flight_summary IN flight_summary_cursor LOOP
+        DBMS_OUTPUT.PUT_LINE('Airplane: ' || flight_summary.airplane_id || ' (' || flight_summary.model || ')');
+        DBMS_OUTPUT.PUT_LINE('  Total Flights: ' || flight_summary.total_flights);
+
+        -- Convert avg_flight_duration from seconds to HH24:MI:SS
+        DBMS_OUTPUT.PUT_LINE('  Average Flight Duration: ' || 
+                             TRIM(TO_CHAR(TRUNC(flight_summary.avg_flight_duration/3600), '00')) || ':' ||
+                             TRIM(TO_CHAR(TRUNC(MOD(flight_summary.avg_flight_duration, 3600)/60), '00')) || ':' ||
+                             TRIM(TO_CHAR(MOD(flight_summary.avg_flight_duration, 60), '00')));
+
+        DBMS_OUTPUT.PUT_LINE('  Delayed Flights: ' || flight_summary.delayed_flights);
+        DBMS_OUTPUT.PUT_LINE('  Cancelled Flights: ' || flight_summary.cancelled_flights);
+        DBMS_OUTPUT.PUT_LINE('  Route Performance:');
+
+        FOR route_perf IN route_performance_cursor(flight_summary.airplane_id) LOOP
+            DBMS_OUTPUT.PUT_LINE('    ' || route_perf.origin || ' to ' || route_perf.destination);
+            DBMS_OUTPUT.PUT_LINE('      Flights: ' || route_perf.route_flights);
+
+            -- Convert avg_route_duration from seconds to HH24:MI:SS
+            DBMS_OUTPUT.PUT_LINE('      Avg Duration: ' || 
+                                 TRIM(TO_CHAR(TRUNC(route_perf.avg_route_duration/3600), '00')) || ':' ||
+                                 TRIM(TO_CHAR(TRUNC(MOD(route_perf.avg_route_duration, 3600)/60), '00')) || ':' ||
+                                 TRIM(TO_CHAR(MOD(route_perf.avg_route_duration, 60), '00')));
+
+            DBMS_OUTPUT.PUT_LINE('      Delayed: ' || route_perf.route_delayed_flights);
+        END LOOP;
+
+        DBMS_OUTPUT.PUT_LINE('--------------------------------------------');
+
+        v_total_flights := v_total_flights + flight_summary.total_flights;
+        v_total_delayed := v_total_delayed + flight_summary.delayed_flights;
+        v_total_cancelled := v_total_cancelled + flight_summary.cancelled_flights;
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('Overall Summary:');
+    DBMS_OUTPUT.PUT_LINE('  Total Flights: ' || v_total_flights);
+    DBMS_OUTPUT.PUT_LINE('  Total Delayed Flights: ' || v_total_delayed);
+    DBMS_OUTPUT.PUT_LINE('  Total Cancelled Flights: ' || v_total_cancelled);
+
+    IF v_total_flights > 0 THEN
+        DBMS_OUTPUT.PUT_LINE('  On-Time Performance: ' || 
+            TO_CHAR(((v_total_flights - v_total_delayed - v_total_cancelled) / v_total_flights) * 100, '999.99') || '%');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  On-Time Performance: N/A (No flights recorded)');
+    END IF;
+END;
+/
+
+CREATE OR REPLACE PROCEDURE maintenance_history(
+    p_start_date DATE,
+    p_end_date DATE
+) IS
+    CURSOR airplane_cursor IS
+        SELECT DISTINCT a.airplane_id, a.model
+        FROM Airplanes a
+        JOIN Maintenance_Tasks mt ON a.airplane_id = mt.airplane_id
+        WHERE mt.maintenance_date BETWEEN p_start_date AND p_end_date
+        ORDER BY a.airplane_id;
+
+    CURSOR maintenance_cursor (p_airplane_id VARCHAR2) IS
+        SELECT mt.maintenance_task_id, m.description, mt.maintenance_date, mt.status,
+               mp.name AS part_name, mp.replacement_date, mp.cost
+        FROM Maintenance_Tasks mt
+        JOIN Maintenance m ON mt.maintenance_id = m.maintenance_id
+        LEFT JOIN Maintenance_Parts mp ON mt.part_id = mp.part_id
+        WHERE mt.airplane_id = p_airplane_id
+          AND mt.maintenance_date BETWEEN p_start_date AND p_end_date
+        ORDER BY mt.maintenance_date;
+
+    v_total_maintenance_cost NUMBER := 0;
+    v_airplane_maintenance_cost NUMBER := 0;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Detailed Maintenance History Report');
+    DBMS_OUTPUT.PUT_LINE('Period: ' || TO_CHAR(p_start_date, 'DD-MON-YYYY') || ' to ' || TO_CHAR(p_end_date, 'DD-MON-YYYY'));
+    DBMS_OUTPUT.PUT_LINE('--------------------------------------------');
+
+    FOR airplane_rec IN airplane_cursor LOOP
+        DBMS_OUTPUT.PUT_LINE('Airplane: ' || airplane_rec.airplane_id || ' (' || airplane_rec.model || ')');
+        v_airplane_maintenance_cost := 0;
+
+        FOR maintenance_rec IN maintenance_cursor(airplane_rec.airplane_id) LOOP
+            DBMS_OUTPUT.PUT_LINE('  Maintenance Task: ' || maintenance_rec.maintenance_task_id);
+            DBMS_OUTPUT.PUT_LINE('    Description: ' || maintenance_rec.description);
+            DBMS_OUTPUT.PUT_LINE('    Date: ' || TO_CHAR(maintenance_rec.maintenance_date, 'DD-MON-YYYY'));
+            DBMS_OUTPUT.PUT_LINE('    Status: ' || maintenance_rec.status);
+            
+            IF maintenance_rec.part_name IS NOT NULL THEN
+                DBMS_OUTPUT.PUT_LINE('    Part Replaced: ' || maintenance_rec.part_name);
+                DBMS_OUTPUT.PUT_LINE('    Replacement Date: ' || TO_CHAR(maintenance_rec.replacement_date, 'DD-MON-YYYY'));
+                DBMS_OUTPUT.PUT_LINE('    Cost: $' || TO_CHAR(maintenance_rec.cost, '999,999.99'));
+                
+                v_airplane_maintenance_cost := v_airplane_maintenance_cost + NVL(maintenance_rec.cost, 0);
+            END IF;
+            
+            DBMS_OUTPUT.PUT_LINE('  ----------------------------------------');
+        END LOOP;
+
+        DBMS_OUTPUT.PUT_LINE('  Total Maintenance Cost for ' || airplane_rec.airplane_id || ': $' || TO_CHAR(v_airplane_maintenance_cost, '999,999.99'));
+        DBMS_OUTPUT.PUT_LINE('--------------------------------------------');
+
+        v_total_maintenance_cost := v_total_maintenance_cost + v_airplane_maintenance_cost;
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('Overall Maintenance Summary:');
+    DBMS_OUTPUT.PUT_LINE('  Total Maintenance Cost: $' || TO_CHAR(v_total_maintenance_cost, '999,999.99'));
+
+    -- Calculate average maintenance cost per airplane
+    DECLARE
+        v_airplane_count NUMBER;
+    BEGIN
+        SELECT COUNT(DISTINCT airplane_id) INTO v_airplane_count
+        FROM Maintenance_Tasks
+        WHERE maintenance_date BETWEEN p_start_date AND p_end_date;
+
+        IF v_airplane_count > 0 THEN
+            DBMS_OUTPUT.PUT_LINE('  Average Maintenance Cost per Airplane: $' || 
+                TO_CHAR(v_total_maintenance_cost / v_airplane_count, '999,999.99'));
+        END IF;
+    END;
+END;
+/
+
+CREATE VIEW Member_Passenger_View AS
+SELECT 
+    m.member_id,
+    m.name AS member_name,
+    m.email AS member_email,
+    m.phone AS member_phone,
+    m.address AS member_address,
+    m.date_of_birth AS member_dob,
+    m.membership_date,
+    m.total_trips,
+    p.passenger_id,
+    p.name AS passenger_name,
+    p.email AS passenger_email,
+    p.phone AS passenger_phone,
+    p.passport_number,
+    p.nationality
+FROM 
+    Members m
+LEFT JOIN 
+    Passengers p ON m.member_id = p.member_id;
+
+View test
+SELECT * FROM Member_Passenger_View;
+
+CREATE TABLE InsertStaff (
+    staff_id        CHAR(5),
+    name            VARCHAR2(30),
+    email           VARCHAR2(30),
+    phone           VARCHAR2(30),
+    gender          CHAR(1),
+    position        VARCHAR2(30),
+    hire_date       DATE,
+    salary          NUMBER,
+    action_user     VARCHAR2(30),
+    action_time     DATE,
+    action_time_char VARCHAR2(8)
+);
+
+CREATE TABLE UpdateStaff (
+    old_staff_id         CHAR(5),
+    old_name             VARCHAR2(30),
+    new_name             VARCHAR2(30),
+    old_email            VARCHAR2(30),
+    new_email            VARCHAR2(30),
+    old_phone            VARCHAR2(30),
+    new_phone            VARCHAR2(30),
+    old_gender           CHAR(1),
+    new_gender           CHAR(1),
+    old_position         VARCHAR2(30),
+    new_position         VARCHAR2(30),
+    old_hire_date        DATE,
+    new_hire_date        DATE,
+    old_salary           NUMBER,
+    new_salary           NUMBER,
+    action_user          VARCHAR2(30),
+    action_time          DATE,
+    action_time_char     VARCHAR2(8)
+);
+
+CREATE TABLE DeleteStaff (
+    staff_id        CHAR(5),
+    name            VARCHAR2(30),
+    email           VARCHAR2(30),
+    phone           VARCHAR2(30),
+    gender          CHAR(1),
+    position        VARCHAR2(30),
+    hire_date       DATE,
+    salary          NUMBER,
+    action_user     VARCHAR2(30),
+    action_time     DATE,
+    action_time_char VARCHAR2(8)
+);
+
+CREATE OR REPLACE TRIGGER trg_track_Staff
+AFTER INSERT OR UPDATE OR DELETE ON Staff
+FOR EACH ROW
+BEGIN
+    CASE
+        WHEN INSERTING THEN
+            INSERT INTO InsertStaff
+            VALUES(:NEW.staff_id, :NEW.name, :NEW.email, :NEW.phone, 
+                   :NEW.gender, :NEW.position, :NEW.hire_date, 
+                   :NEW.salary, USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+
+        WHEN UPDATING THEN
+            INSERT INTO UpdateStaff
+            VALUES(:OLD.staff_id, :OLD.name, :NEW.name, 
+                   :OLD.email, :NEW.email, 
+                   :OLD.phone, :NEW.phone, 
+                   :OLD.gender, :NEW.gender, 
+                   :OLD.position, :NEW.position, 
+                   :OLD.hire_date, :NEW.hire_date, 
+                   :OLD.salary, :NEW.salary, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+        
+        WHEN DELETING THEN
+            INSERT INTO DeleteStaff
+            VALUES(:OLD.staff_id, :OLD.name, :OLD.email, 
+                   :OLD.phone, :OLD.gender, :OLD.position, 
+                   :OLD.hire_date, :OLD.salary, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+    END CASE;
+END;
+/
+
+INSERT INTO Staff (staff_id, name, email, phone, gender, position, hire_date, salary)
+VALUES ('S991', 'John Doe', 'john.doe@example.com', '1234567890', 'M', 'Pilot', TO_DATE('2020-01-15', 'YYYY-MM-DD'), 50000);
+
+INSERT INTO Staff (staff_id, name, email, phone, gender, position, hire_date, salary)
+VALUES ('S992', 'Jane Smith', 'jane.smith@example.com', '0987654321', 'F', 'Flight Attendant', TO_DATE('2018-06-01', 'YYYY-MM-DD'), 40000);
+
+UPDATE Staff
+SET name = 'Johnathan Doe', salary = 55000
+WHERE staff_id = 'S991';
+
+DELETE FROM Staff
+WHERE staff_id = 'S992';
+
+SELECT * FROM InsertStaff;
+SELECT * FROM UpdateStaff;
+SELECT * FROM DeleteStaff;

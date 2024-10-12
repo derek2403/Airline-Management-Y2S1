@@ -1,0 +1,37 @@
+ACCEPT member_id PROMPT 'Enter Member ID: '
+
+COLUMN member_name FORMAT A20 HEADING 'Member Name'
+COLUMN email FORMAT A25 HEADING 'Email'
+COLUMN total_flights FORMAT 999 HEADING 'Total Flights'
+COLUMN total_spent FORMAT 9,999,999.99 HEADING 'Total Spent'
+COLUMN avg_spent_per_flight FORMAT 99,999.99 HEADING 'Avg Spent/Flight'
+COLUMN last_flight_date FORMAT A20 HEADING 'Last Flight Date'
+COLUMN membership_status FORMAT A20 HEADING 'Membership Status'
+
+TTITLE CENTER 'Flight History and Spending Analysis for Member: &member_id' SKIP 1
+
+SELECT 
+    m.name AS member_name,
+    m.email,
+    COUNT(DISTINCT b.flight_id) AS total_flights,
+    SUM(p.amount) AS total_spent,
+    AVG(p.amount) AS avg_spent_per_flight,
+    TO_CHAR(MAX(f.departure_time), 'YYYY-MM-DD HH24:MI:SS') AS last_flight_date,
+    CASE 
+        WHEN COUNT(DISTINCT b.flight_id) >= 10 AND SUM(p.amount) >= 5000 THEN 'Eligible for Gold Status'
+        WHEN COUNT(DISTINCT b.flight_id) >= 5 AND SUM(p.amount) >= 2500 THEN 'Eligible for Silver Status'
+        ELSE 'Standard Member'
+    END AS membership_status
+FROM 
+    Members m
+    JOIN Passengers pas ON m.member_id = pas.member_id
+    JOIN Bookings b ON pas.passenger_id = b.passenger_id
+    JOIN Flights f ON b.flight_id = f.flight_id
+    JOIN Payments p ON b.booking_id = p.booking_id
+WHERE 
+    m.member_id = '&member_id'
+GROUP BY 
+    m.member_id, m.name, m.email;
+
+CLEAR COLUMNS
+TTITLE OFF

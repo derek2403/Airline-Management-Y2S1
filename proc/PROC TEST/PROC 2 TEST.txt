@@ -1,0 +1,23 @@
+-- Insert a flight for testing
+INSERT INTO Flights (flight_id, flight_number, departure_time, arrival_time, origin, destination, status)
+VALUES ('F870', 'FL870', SYSDATE + 1, SYSDATE + 2, 'City A', 'City B', 'Scheduled');
+-- Insert staff members for each role (Pilot, Co-Pilot, Flight Attendant)
+INSERT INTO Staff (staff_id, name, email, phone, position, hire_date, salary)
+VALUES ('S870', 'John Pilot', 'john.pilot@example.com', '1234567890', 'Pilot', TO_DATE('2015-06-15', 'YYYY-MM-DD'), 80000);
+
+INSERT INTO Staff (staff_id, name, email, phone, position, hire_date, salary)
+VALUES ('S871', 'Jane Co-Pilot', 'jane.copilot@example.com', '0987654321', 'Co-Pilot', TO_DATE('2016-09-10', 'YYYY-MM-DD'), 70000);
+
+INSERT INTO Staff (staff_id, name, email, phone, position, hire_date, salary)
+VALUES ('S872', 'Alice Attendant', 'alice.attendant@example.com', '2345678901', 'Flight Attendant', TO_DATE('2018-02-20', 'YYYY-MM-DD'), 40000);
+
+INSERT INTO Staff (staff_id, name, email, phone, position, hire_date, salary)
+VALUES ('S873', 'Bob Attendant', 'bob.attendant@example.com', '3456789012', 'Flight Attendant', TO_DATE('2019-05-30', 'YYYY-MM-DD'), 35000);
+BEGIN
+    assign_staff_to_flight('F870');
+END;
+/
+-- Verify that staff have been assigned to the flight
+SELECT * FROM Workload_Allocations WHERE flight_id = 'F870';
+
+

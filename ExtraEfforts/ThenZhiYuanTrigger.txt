@@ -1,0 +1,97 @@
+CREATE TABLE InsertStaff (
+    staff_id        CHAR(5),
+    name            VARCHAR2(30),
+    email           VARCHAR2(30),
+    phone           VARCHAR2(30),
+    gender          CHAR(1),
+    position        VARCHAR2(30),
+    hire_date       DATE,
+    salary          NUMBER,
+    action_user     VARCHAR2(30),
+    action_time     DATE,
+    action_time_char VARCHAR2(8)
+);
+
+CREATE TABLE UpdateStaff (
+    old_staff_id         CHAR(5),
+    old_name             VARCHAR2(30),
+    new_name             VARCHAR2(30),
+    old_email            VARCHAR2(30),
+    new_email            VARCHAR2(30),
+    old_phone            VARCHAR2(30),
+    new_phone            VARCHAR2(30),
+    old_gender           CHAR(1),
+    new_gender           CHAR(1),
+    old_position         VARCHAR2(30),
+    new_position         VARCHAR2(30),
+    old_hire_date        DATE,
+    new_hire_date        DATE,
+    old_salary           NUMBER,
+    new_salary           NUMBER,
+    action_user          VARCHAR2(30),
+    action_time          DATE,
+    action_time_char     VARCHAR2(8)
+);
+
+CREATE TABLE DeleteStaff (
+    staff_id        CHAR(5),
+    name            VARCHAR2(30),
+    email           VARCHAR2(30),
+    phone           VARCHAR2(30),
+    gender          CHAR(1),
+    position        VARCHAR2(30),
+    hire_date       DATE,
+    salary          NUMBER,
+    action_user     VARCHAR2(30),
+    action_time     DATE,
+    action_time_char VARCHAR2(8)
+);
+
+CREATE OR REPLACE TRIGGER trg_track_Staff
+AFTER INSERT OR UPDATE OR DELETE ON Staff
+FOR EACH ROW
+BEGIN
+    CASE
+        WHEN INSERTING THEN
+            INSERT INTO InsertStaff
+            VALUES(:NEW.staff_id, :NEW.name, :NEW.email, :NEW.phone, 
+                   :NEW.gender, :NEW.position, :NEW.hire_date, 
+                   :NEW.salary, USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+
+        WHEN UPDATING THEN
+            INSERT INTO UpdateStaff
+            VALUES(:OLD.staff_id, :OLD.name, :NEW.name, 
+                   :OLD.email, :NEW.email, 
+                   :OLD.phone, :NEW.phone, 
+                   :OLD.gender, :NEW.gender, 
+                   :OLD.position, :NEW.position, 
+                   :OLD.hire_date, :NEW.hire_date, 
+                   :OLD.salary, :NEW.salary, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+        
+        WHEN DELETING THEN
+            INSERT INTO DeleteStaff
+            VALUES(:OLD.staff_id, :OLD.name, :OLD.email, 
+                   :OLD.phone, :OLD.gender, :OLD.position, 
+                   :OLD.hire_date, :OLD.salary, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+    END CASE;
+END;
+/
+
+INSERT INTO Staff (staff_id, name, email, phone, gender, position, hire_date, salary)
+VALUES ('S991', 'John Doe', 'john.doe@example.com', '1234567890', 'M', 'Pilot', TO_DATE('2020-01-15', 'YYYY-MM-DD'), 50000);
+
+INSERT INTO Staff (staff_id, name, email, phone, gender, position, hire_date, salary)
+VALUES ('S992', 'Jane Smith', 'jane.smith@example.com', '0987654321', 'F', 'Flight Attendant', TO_DATE('2018-06-01', 'YYYY-MM-DD'), 40000);
+
+UPDATE Staff
+SET name = 'Johnathan Doe', salary = 55000
+WHERE staff_id = 'S991';
+
+DELETE FROM Staff
+WHERE staff_id = 'S992';
+
+SELECT * FROM InsertStaff;
+SELECT * FROM UpdateStaff;
+SELECT * FROM DeleteStaff;

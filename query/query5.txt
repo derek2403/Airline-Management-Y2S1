@@ -1,0 +1,52 @@
+ACCEPT flight_number PROMPT 'Enter Flight Number: '
+
+COLUMN flight_number FORMAT A15 HEADING 'Flight Number'
+COLUMN departure_time FORMAT A20 HEADING 'Departure Time'
+COLUMN passenger_name FORMAT A20 HEADING 'Passenger Name'
+COLUMN seat_number FORMAT A10 HEADING 'Seat'
+COLUMN booking_status FORMAT A15 HEADING 'Booking Status'
+COLUMN payment_status FORMAT A15 HEADING 'Payment Status'
+COLUMN payment_amount FORMAT 999,999.99 HEADING 'Payment Amount'
+
+TTITLE CENTER 'Booking and Payment Status for Flight: &flight_number' SKIP 1
+BREAK ON flight_number SKIP 1 ON departure_time SKIP 1
+
+SELECT 
+    f.flight_number,
+    TO_CHAR(f.departure_time, 'YYYY-MM-DD HH24:MI:SS') AS departure_time,
+    p.name AS passenger_name,
+    b.seat_number,
+    b.status AS booking_status,
+    b.payment_status,
+    py.amount AS payment_amount
+FROM 
+    Flights f
+    JOIN Bookings b ON f.flight_id = b.flight_id
+    JOIN Passengers p ON b.passenger_id = p.passenger_id
+    LEFT JOIN Payments py ON b.booking_id = py.booking_id
+WHERE 
+    f.flight_number = '&flight_number'
+ORDER BY 
+    f.departure_time, b.seat_number;
+
+TTITLE OFF
+BREAK ON REPORT
+COMPUTE SUM LABEL 'Total' OF payment_amount ON REPORT
+COMPUTE COUNT LABEL 'Total Passengers' OF passenger_name ON REPORT
+
+SELECT 
+    'Summary' AS summary,
+    COUNT(*) AS total_bookings,
+    SUM(CASE WHEN b.payment_status = 'Paid' THEN 1 ELSE 0 END) AS paid_bookings,
+    SUM(CASE WHEN b.payment_status = 'Pending' THEN 1 ELSE 0 END) AS pending_payments,
+    SUM(py.amount) AS total_revenue
+FROM 
+    Flights f
+    JOIN Bookings b ON f.flight_id = b.flight_id
+    LEFT JOIN Payments py ON b.booking_id = py.booking_id
+WHERE 
+    f.flight_number = '&flight_number';
+
+CLEAR COLUMNS
+CLEAR BREAKS
+TTITLE OFF

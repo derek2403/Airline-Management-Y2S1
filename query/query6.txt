@@ -1,0 +1,44 @@
+ACCEPT flight_id PROMPT 'Enter Flight ID: '
+ACCEPT start_date PROMPT 'Enter Start Date (YYYY-MM-DD): '
+ACCEPT end_date PROMPT 'Enter End Date (YYYY-MM-DD): '
+
+COLUMN flight_number FORMAT A15 HEADING 'Flight Number'
+COLUMN departure_time FORMAT A20 HEADING 'Departure Time'
+COLUMN airplane_model FORMAT A15 HEADING 'Airplane Model'
+COLUMN total_bookings FORMAT 999 HEADING 'Total Bookings'
+COLUMN total_revenue FORMAT 9,999,999.99 HEADING 'Total Revenue'
+COLUMN capacity_utilization FORMAT 999.99 HEADING 'Capacity Util. (%)'
+COLUMN revenue_per_seat FORMAT 9,999.99 HEADING 'Revenue/Seat'
+COLUMN utilization_category FORMAT A10 HEADING 'Util. Category'
+
+TTITLE CENTER 'Flight Profitability and Capacity Utilization Analysis' SKIP 1 -
+       CENTER 'Flight ID: &flight_id | Period: &start_date to &end_date' SKIP 1
+
+SELECT 
+    f.flight_number,
+    TO_CHAR(f.departure_time, 'YYYY-MM-DD HH24:MI:SS') AS departure_time,
+    a.model AS airplane_model,
+    COUNT(DISTINCT b.booking_id) AS total_bookings,
+    SUM(p.amount) AS total_revenue,
+    COUNT(DISTINCT b.booking_id) / a.capacity * 100 AS capacity_utilization,
+    SUM(p.amount) / a.capacity AS revenue_per_seat,
+    CASE 
+        WHEN COUNT(DISTINCT b.booking_id) / a.capacity * 100 < 50 THEN 'Low'
+        WHEN COUNT(DISTINCT b.booking_id) / a.capacity * 100 BETWEEN 50 AND 80 THEN 'Medium'
+        ELSE 'High'
+    END AS utilization_category
+FROM 
+    Flights f
+    JOIN Airplanes a ON f.airplane_id = a.airplane_id
+    LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+    LEFT JOIN Payments p ON b.booking_id = p.booking_id
+WHERE 
+    f.flight_id = '&flight_id'
+    AND f.departure_time BETWEEN TO_DATE('&start_date', 'YYYY-MM-DD') AND TO_DATE('&end_date', 'YYYY-MM-DD')
+GROUP BY 
+    f.flight_id, f.flight_number, f.departure_time, a.model, a.capacity
+ORDER BY 
+    f.departure_time;
+
+CLEAR COLUMNS
+TTITLE OFF

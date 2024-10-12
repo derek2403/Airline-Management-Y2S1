@@ -1,0 +1,558 @@
+SELECT 
+    f.flight_number,
+    TO_CHAR(f.departure_time, 'YYYY-MM-DD HH24:MI:SS') AS departure_time,
+    p.name AS passenger_name,
+    b.seat_number,
+    b.status AS booking_status,
+    b.payment_status,
+    py.amount AS payment_amount
+FROM 
+    Flights f
+    JOIN Bookings b ON f.flight_id = b.flight_id
+    JOIN Passengers p ON b.passenger_id = p.passenger_id
+    LEFT JOIN Payments py ON b.booking_id = py.booking_id
+WHERE 
+    f.flight_number = '&flight_number'
+ORDER BY 
+    f.departure_time, b.seat_number;
+
+TTITLE OFF
+BREAK ON REPORT
+COMPUTE SUM LABEL 'Total' OF payment_amount ON REPORT
+COMPUTE COUNT LABEL 'Total Passengers' OF passenger_name ON REPORT
+
+SELECT 
+    'Summary' AS summary,
+    COUNT(*) AS total_bookings,
+    SUM(CASE WHEN b.payment_status = 'Paid' THEN 1 ELSE 0 END) AS paid_bookings,
+    SUM(CASE WHEN b.payment_status = 'Pending' THEN 1 ELSE 0 END) AS pending_payments,
+    SUM(py.amount) AS total_revenue
+FROM 
+    Flights f
+    JOIN Bookings b ON f.flight_id = b.flight_id
+    LEFT JOIN Payments py ON b.booking_id = py.booking_id
+WHERE 
+    f.flight_number = '&flight_number';
+
+
+SELECT 
+    f.flight_number,
+    TO_CHAR(f.departure_time, 'YYYY-MM-DD HH24:MI:SS') AS departure_time,
+    a.model AS airplane_model,
+    COUNT(DISTINCT b.booking_id) AS total_bookings,
+    SUM(p.amount) AS total_revenue,
+    COUNT(DISTINCT b.booking_id) / a.capacity * 100 AS capacity_utilization,
+    SUM(p.amount) / a.capacity AS revenue_per_seat,
+    CASE 
+        WHEN COUNT(DISTINCT b.booking_id) / a.capacity * 100 < 50 THEN 'Low'
+        WHEN COUNT(DISTINCT b.booking_id) / a.capacity * 100 BETWEEN 50 AND 80 THEN 'Medium'
+        ELSE 'High'
+    END AS utilization_category
+FROM 
+    Flights f
+    JOIN Airplanes a ON f.airplane_id = a.airplane_id
+    LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+    LEFT JOIN Payments p ON b.booking_id = p.booking_id
+WHERE 
+    f.flight_id = '&flight_id'
+    AND f.departure_time BETWEEN TO_DATE('&start_date', 'YYYY-MM-DD') AND TO_DATE('&end_date', 'YYYY-MM-DD')
+GROUP BY 
+    f.flight_id, f.flight_number, f.departure_time, a.model, a.capacity
+ORDER BY 
+    f.departure_time;
+
+CREATE OR REPLACE PROCEDURE create_dynamic_promotion (
+    p_name IN Promotions.name%TYPE,
+    p_start_date IN Promotions.start_date%TYPE,
+    p_end_date IN Promotions.end_date%TYPE,
+    p_base_discount IN NUMBER,
+    p_max_discount IN NUMBER
+) AS
+    v_current_bookings NUMBER := 0;
+    v_total_capacity NUMBER := 0;
+    v_occupancy_rate NUMBER := 0;
+    v_dynamic_discount NUMBER;
+BEGIN
+    SELECT COALESCE(SUM(a.capacity), 0), COALESCE(COUNT(b.booking_id), 0)
+    INTO v_total_capacity, v_current_bookings
+    FROM Flights f
+    JOIN Airplanes a ON f.airplane_id = a.airplane_id
+    LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+    WHERE f.departure_time BETWEEN p_start_date AND p_end_date;
+
+    IF v_total_capacity = 0 THEN
+        v_occupancy_rate := 0;
+    ELSE
+        v_occupancy_rate := v_current_bookings / v_total_capacity;
+    END IF;
+
+    v_dynamic_discount := p_base_discount + (1 - v_occupancy_rate) * (p_max_discount - p_base_discount);
+
+    INSERT INTO Promotions (
+        promotion_id, name, start_date, end_date, discount_percentage, status, minimum_trips_required
+    ) VALUES (
+        promotion_seq.NEXTVAL, p_name, p_start_date, p_end_date, v_dynamic_discount, 'Active', 0
+    );
+
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+
+CREATE OR REPLACE PROCEDURE generate_member_newsletter (
+    p_member_id IN Members.member_id%TYPE
+) AS
+    v_member_name Members.name%TYPE;
+    v_total_trips Members.total_trips%TYPE;
+    v_last_flight_date DATE;
+    v_recommended_destination Flights.destination%TYPE;
+    v_newsletter_content CLOB;
+
+    CURSOR c_recent_promotions IS
+        SELECT name, discount_percentage, start_date, end_date
+        FROM (
+            SELECT name, discount_percentage, start_date, end_date
+            FROM Promotions
+            WHERE start_date > SYSDATE
+            ORDER BY start_date ASC
+        )
+        WHERE ROWNUM <= 3;
+BEGIN
+    SELECT name, total_trips
+    INTO v_member_name, v_total_trips
+    FROM Members
+    WHERE member_id = p_member_id;
+
+    SELECT MAX(f.arrival_time)
+    INTO v_last_flight_date
+    FROM Bookings b
+    JOIN Flights f ON b.flight_id = f.flight_id
+    JOIN Passengers p ON b.passenger_id = p.passenger_id
+    WHERE p.member_id = p_member_id;
+
+    BEGIN
+        SELECT destination
+        INTO v_recommended_destination
+        FROM (
+            SELECT f.destination, COUNT(*) AS popularity
+            FROM Flights f
+            JOIN Bookings b ON f.flight_id = b.flight_id
+            WHERE f.departure_time > SYSDATE - INTERVAL '30' DAY
+            GROUP BY f.destination
+            ORDER BY popularity DESC
+        )
+        WHERE ROWNUM = 1;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_recommended_destination := 'N/A'; -- Default value if no data is found
+    END;
+    v_newsletter_content := 'To: ' || p_member_id || '@example.com' || CHR(10) ||
+                            'Subject: Your Personalized Travel Newsletter' || CHR(10) || CHR(10) ||
+                            'Dear ' || v_member_name || ',' || CHR(10) || CHR(10) ||
+                            'We hope this newsletter finds you well. Here''s a summary of your recent activity and some exciting offers:' || CHR(10) || CHR(10) ||
+                            'Total Trips: ' || v_total_trips || CHR(10) ||
+                            'Last Flight: ' || TO_CHAR(v_last_flight_date, 'DD-MON-YYYY') || CHR(10) || CHR(10) ||
+                            'Based on your travel history, we think you might enjoy visiting ' || v_recommended_destination || ' for your next trip!' || CHR(10) || CHR(10) ||
+                            'Upcoming Promotions:';
+
+    -- Add recent promotions to the newsletter
+    FOR promo IN c_recent_promotions LOOP
+        v_newsletter_content := v_newsletter_content || CHR(10) ||
+            '- ' || promo.name || ': ' || promo.discount_percentage || '% off (Valid from ' ||
+            TO_CHAR(promo.start_date, 'DD-MON-YYYY') || ' to ' || TO_CHAR(promo.end_date, 'DD-MON-YYYY') || ')';
+    END LOOP;
+
+    v_newsletter_content := v_newsletter_content || CHR(10) || CHR(10) ||
+                            'Thank you for choosing our airline. We look forward to seeing you on board soon!' || CHR(10) || CHR(10) ||
+                            'Best regards,' || CHR(10) ||
+                            'Your Airline Team';
+
+    -- Print newsletter content
+    DBMS_OUTPUT.PUT_LINE(v_newsletter_content);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20009, 'Invalid member ID or no flight history found');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+
+CREATE OR REPLACE TRIGGER trg_overbooking_waitlist
+BEFORE INSERT OR UPDATE ON Bookings
+FOR EACH ROW
+DECLARE
+    v_capacity NUMBER;
+    v_booked_seats NUMBER := 0;
+    v_waitlist_count NUMBER := 0;
+    v_overbooking_limit NUMBER := 0.1; -- 10% overbooking allowed
+BEGIN
+    -- Get the capacity of the airplane assigned to the flight
+    BEGIN
+        SELECT a.capacity
+        INTO v_capacity
+        FROM Airplanes a
+        JOIN Flights f ON a.airplane_id = f.airplane_id
+        WHERE f.flight_id = :NEW.flight_id;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- If no airplane is found for the flight, raise an error or handle accordingly
+            RAISE_APPLICATION_ERROR(-20001, 'No airplane found for this flight.');
+    END;
+
+    -- Calculate overbooking limit
+    v_capacity := v_capacity * (1 + v_overbooking_limit);
+
+    -- Count the number of confirmed bookings for this flight
+    BEGIN
+        SELECT COUNT(*)
+        INTO v_booked_seats
+        FROM Bookings
+        WHERE flight_id = :NEW.flight_id
+        AND status = 'CONFIRMED';
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- If no confirmed bookings exist, set booked seats to 0
+            v_booked_seats := 0;
+    END;
+
+    -- Count the number of waitlisted bookings for this flight
+    BEGIN
+        SELECT COUNT(*)
+        INTO v_waitlist_count
+        FROM Bookings
+        WHERE flight_id = :NEW.flight_id
+        AND status = 'WAITLISTED';
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- If no waitlisted bookings exist, set waitlist count to 0
+            v_waitlist_count := 0;
+    END;
+
+    -- If it's a new booking or status changed to 'CONFIRMED'
+    IF (INSERTING OR (UPDATING AND :NEW.status = 'CONFIRMED')) THEN
+        -- Check if we're within the overbooking limit
+        IF v_booked_seats < v_capacity THEN
+            -- Confirm the booking
+            :NEW.status := 'CONFIRMED';
+        ELSE
+            -- Add to waitlist if overbooked
+            :NEW.status := 'WAITLISTED';
+        END IF;
+    -- If a booking is cancelled or changed from 'CONFIRMED' to another status
+    ELSIF UPDATING AND :OLD.status = 'CONFIRMED' AND :NEW.status != 'CONFIRMED' THEN
+        -- Check if there are waitlisted bookings
+        IF v_waitlist_count > 0 THEN
+            -- Move the first waitlisted booking to confirmed status
+            UPDATE Bookings
+            SET status = 'CONFIRMED'
+            WHERE booking_id = (
+                SELECT booking_id
+                FROM (
+                    SELECT booking_id
+                    FROM Bookings
+                    WHERE flight_id = :NEW.flight_id
+                    AND status = 'WAITLISTED'
+                    ORDER BY booking_date
+                )
+                WHERE ROWNUM = 1
+            );
+        END IF;
+    END IF;
+END;
+
+/
+
+CREATE OR REPLACE TRIGGER trg_insert_payment_on_purchase
+AFTER INSERT ON Item_Purchases
+FOR EACH ROW
+DECLARE
+    v_item_price NUMBER;
+    v_total_amount NUMBER;
+    v_payment_id VARCHAR2(20);
+BEGIN
+    -- Retrieve the price of the item from the Items table
+    SELECT price INTO v_item_price FROM Items WHERE item_id = :NEW.item_id;
+
+    -- Calculate the total price based on the quantity purchased
+    v_total_amount := v_item_price * :NEW.quantity;
+
+    -- Generate a unique payment ID using a sequence
+    v_payment_id := 'P' || TO_CHAR(payment_seq.NEXTVAL);
+
+    -- Insert a new payment record into the Payments table
+    INSERT INTO Payments (payment_id, booking_id, payment_date, amount, payment_method, status)
+    VALUES (v_payment_id, :NEW.booking_id, SYSDATE, v_total_amount, 'CreditCard', 'pending');
+END;
+/
+
+CREATE OR REPLACE PROCEDURE booking_revenue_report IS
+    CURSOR flight_cur IS
+        SELECT f.flight_id, f.flight_number, f.departure_time, f.origin, f.destination,
+               COUNT(b.booking_id) AS total_bookings,
+               SUM(p.amount) AS total_revenue
+        FROM Flights f
+        LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+        LEFT JOIN Payments p ON b.booking_id = p.booking_id
+        WHERE f.departure_time BETWEEN TRUNC(SYSDATE) AND TRUNC(SYSDATE) + 30  -- Next 30 days
+        GROUP BY f.flight_id, f.flight_number, f.departure_time, f.origin, f.destination
+        ORDER BY f.departure_time;
+
+    CURSOR booking_details_cur(p_flight_id VARCHAR2) IS
+        SELECT b.booking_id, p.name AS passenger_name, b.seat_number, 
+               pay.amount AS payment_amount, i.name AS item_name, ip.quantity
+        FROM Bookings b
+        JOIN Passengers p ON b.passenger_id = p.passenger_id
+        LEFT JOIN Payments pay ON b.booking_id = pay.booking_id
+        LEFT JOIN Item_Purchases ip ON b.booking_id = ip.booking_id
+        LEFT JOIN Items i ON ip.item_id = i.item_id
+        WHERE b.flight_id = p_flight_id;
+
+    v_flight_rec flight_cur%ROWTYPE;
+    v_booking_rec booking_details_cur%ROWTYPE;
+    v_total_revenue NUMBER := 0;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Comprehensive Booking and Revenue Report');
+    DBMS_OUTPUT.PUT_LINE('Period: Next 30 days');
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+
+    OPEN flight_cur;
+    LOOP
+        FETCH flight_cur INTO v_flight_rec;
+        EXIT WHEN flight_cur%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE('Flight: ' || v_flight_rec.flight_number);
+        DBMS_OUTPUT.PUT_LINE('Departure: ' || TO_CHAR(v_flight_rec.departure_time, 'DD-MON-YYYY HH24:MI'));
+        DBMS_OUTPUT.PUT_LINE('Route: ' || v_flight_rec.origin || ' to ' || v_flight_rec.destination);
+        DBMS_OUTPUT.PUT_LINE('Total Bookings: ' || v_flight_rec.total_bookings);
+        DBMS_OUTPUT.PUT_LINE('Total Revenue: $' || TO_CHAR(v_flight_rec.total_revenue, '999,999.99'));
+        DBMS_OUTPUT.PUT_LINE('Booking Details:');
+
+        OPEN booking_details_cur(v_flight_rec.flight_id);
+        LOOP
+            FETCH booking_details_cur INTO v_booking_rec;
+            EXIT WHEN booking_details_cur%NOTFOUND;
+
+            DBMS_OUTPUT.PUT_LINE('  Booking ID: ' || v_booking_rec.booking_id || 
+                                 ', Passenger: ' || v_booking_rec.passenger_name || 
+                                 ', Seat: ' || v_booking_rec.seat_number || 
+                                 ', Payment: $' || TO_CHAR(v_booking_rec.payment_amount, '999,999.99'));
+            IF v_booking_rec.item_name IS NOT NULL THEN
+                DBMS_OUTPUT.PUT_LINE('    Additional Purchase: ' || v_booking_rec.item_name || 
+                                     ' (Quantity: ' || v_booking_rec.quantity || ')');
+            END IF;
+        END LOOP;
+        CLOSE booking_details_cur;
+
+        -- Accumulate the total revenue
+        v_total_revenue := v_total_revenue + NVL(v_flight_rec.total_revenue, 0); -- Handle possible NULL values
+
+        DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    END LOOP;
+    CLOSE flight_cur;
+
+    -- Display the total revenue at the end
+    DBMS_OUTPUT.PUT_LINE('Total Revenue for All Flights: $' || TO_CHAR(v_total_revenue, '999,999,999.99'));
+END;
+/
+
+CREATE OR REPLACE PROCEDURE promotion_effectiveness_report(
+    p_promotion_id IN VARCHAR2
+) IS
+    CURSOR promotion_cur IS
+        SELECT p.promotion_id, p.name, p.start_date, p.end_date, p.discount_percentage,
+               COUNT(pa.application_id) AS total_applications,
+               SUM(pa.discount_amount) AS total_discount_amount
+        FROM Promotions p
+        LEFT JOIN Promotion_Applications pa ON p.promotion_id = pa.promotion_id
+        WHERE p.promotion_id = p_promotion_id
+        GROUP BY p.promotion_id, p.name, p.start_date, p.end_date, p.discount_percentage;
+
+    CURSOR booking_details_cur(p_promo_id VARCHAR2) IS
+        SELECT b.booking_id, m.name AS member_name, f.flight_number, 
+               f.origin, f.destination, pa.discount_amount
+        FROM Promotion_Applications pa
+        JOIN Bookings b ON pa.booking_id = b.booking_id
+        JOIN Flights f ON b.flight_id = f.flight_id
+        JOIN Passengers p ON b.passenger_id = p.passenger_id
+        JOIN Members m ON p.member_id = m.member_id
+        WHERE pa.promotion_id = p_promo_id
+        ORDER BY pa.application_date;
+
+    v_promo_rec promotion_cur%ROWTYPE;
+    v_booking_rec booking_details_cur%ROWTYPE;
+    v_avg_discount NUMBER;
+BEGIN
+    OPEN promotion_cur;
+    FETCH promotion_cur INTO v_promo_rec;
+    
+    IF promotion_cur%NOTFOUND THEN
+        DBMS_OUTPUT.PUT_LINE('Promotion not found: ' || p_promotion_id);
+        CLOSE promotion_cur;
+        RETURN;
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('Promotion Effectiveness Evaluation');
+    DBMS_OUTPUT.PUT_LINE('Promotion: ' || v_promo_rec.name || ' (ID: ' || v_promo_rec.promotion_id || ')');
+    DBMS_OUTPUT.PUT_LINE('Period: ' || TO_CHAR(v_promo_rec.start_date, 'DD-MON-YYYY') || 
+                         ' to ' || TO_CHAR(v_promo_rec.end_date, 'DD-MON-YYYY'));
+    DBMS_OUTPUT.PUT_LINE('Discount Percentage: ' || v_promo_rec.discount_percentage || '%');
+    DBMS_OUTPUT.PUT_LINE('Total Applications: ' || v_promo_rec.total_applications);
+    DBMS_OUTPUT.PUT_LINE('Total Discount Amount: $' || TO_CHAR(v_promo_rec.total_discount_amount, '999,999.99'));
+
+    IF v_promo_rec.total_applications > 0 THEN
+        v_avg_discount := v_promo_rec.total_discount_amount / v_promo_rec.total_applications;
+        DBMS_OUTPUT.PUT_LINE('Average Discount per Application: $' || TO_CHAR(v_avg_discount, '999,999.99'));
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('Booking Details:');
+
+    OPEN booking_details_cur(p_promotion_id);
+    LOOP
+        FETCH booking_details_cur INTO v_booking_rec;
+        EXIT WHEN booking_details_cur%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE('  Booking ID: ' || v_booking_rec.booking_id || 
+                             ', Member: ' || v_booking_rec.member_name);
+        DBMS_OUTPUT.PUT_LINE('    Flight: ' || v_booking_rec.flight_number || 
+                             ' (' || v_booking_rec.origin || ' to ' || v_booking_rec.destination || ')');
+        DBMS_OUTPUT.PUT_LINE('    Discount Applied: $' || TO_CHAR(v_booking_rec.discount_amount, '999,999.99'));
+        DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    END LOOP;
+    CLOSE booking_details_cur;
+
+    CLOSE promotion_cur;
+END;
+/
+
+CREATE OR REPLACE VIEW member_travel_history_view AS
+SELECT 
+    m.member_id,
+    m.name AS member_name,
+    f.flight_number,
+    f.departure_time,
+    f.origin,
+    f.destination,
+    b.seat_number
+FROM 
+    Members m
+JOIN Passengers p ON m.member_id = p.member_id
+JOIN Bookings b ON p.passenger_id = b.passenger_id
+JOIN Flights f ON b.flight_id = f.flight_id;
+
+CREATE INDEX idx_flights_departure_time ON Flights (departure_time);
+CREATE INDEX idx_bookings_flight_status ON Bookings (flight_id, status);
+CREATE OR REPLACE PROCEDURE generate_flight_report (
+    p_start_date IN DATE,
+    p_end_date IN DATE
+) AS
+BEGIN
+    FOR flight_rec IN (
+        SELECT f.flight_number, f.departure_time, f.origin, f.destination,
+               COUNT(b.booking_id) AS confirmed_bookings
+        FROM Flights f
+        LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+        WHERE f.departure_time BETWEEN p_start_date AND p_end_date
+          AND b.status = 'Confirmed'
+        GROUP BY f.flight_number, f.departure_time, f.origin, f.destination
+        ORDER BY f.departure_time
+    ) LOOP
+        DBMS_OUTPUT.PUT_LINE('Flight: ' || flight_rec.flight_number || 
+                             ' | Departure: ' || TO_CHAR(flight_rec.departure_time, 'DD-MON-YYYY HH24:MI') || 
+                             ' | Origin: ' || flight_rec.origin || 
+                             ' | Destination: ' || flight_rec.destination || 
+                             ' | Confirmed Bookings: ' || flight_rec.confirmed_bookings);
+    END LOOP;
+END;
+/
+
+BEGIN
+    generate_flight_report(TO_DATE('2024-09-01', 'YYYY-MM-DD'), TO_DATE('2024-09-30', 'YYYY-MM-DD'));
+END;
+/
+
+CREATE TABLE InsertAirplanes (
+    airplane_id         CHAR(5),
+    model               VARCHAR2(30),
+    capacity            NUMBER,
+    manufacture_date    DATE,
+    status              VARCHAR2(12),
+    action_user         VARCHAR2(30),
+    action_time         DATE,
+    action_time_char    VARCHAR2(8)
+);
+CREATE TABLE UpdateAirplanes (
+    old_airplane_id         CHAR(5),
+    old_model               VARCHAR2(30),
+    new_model               VARCHAR2(30),
+    old_capacity            NUMBER,
+    new_capacity            NUMBER,
+    old_manufacture_date    DATE,
+    new_manufacture_date    DATE,
+    old_status              VARCHAR2(12),
+    new_status              VARCHAR2(12),
+    action_user             VARCHAR2(30),
+    action_time             DATE,
+    action_time_char        VARCHAR2(8)
+);
+
+CREATE TABLE DeleteAirplanes (
+    airplane_id         CHAR(5),
+    model               VARCHAR2(30),
+    capacity            NUMBER,
+    manufacture_date    DATE,
+    status              VARCHAR2(12),
+    action_user         VARCHAR2(30),
+    action_time         DATE,
+    action_time_char    VARCHAR2(8)
+);
+
+CREATE OR REPLACE TRIGGER trg_track_Airplanes
+AFTER INSERT OR UPDATE OR DELETE ON Airplanes
+FOR EACH ROW
+BEGIN
+    CASE
+        WHEN INSERTING THEN
+            INSERT INTO InsertAirplanes
+            VALUES(:NEW.airplane_id, :NEW.model, :NEW.capacity, :NEW.manufacture_date, 
+                   :NEW.status, USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+
+        WHEN UPDATING THEN
+            INSERT INTO UpdateAirplanes
+            VALUES(:OLD.airplane_id, :OLD.model, :NEW.model, 
+                   :OLD.capacity, :NEW.capacity, 
+                   :OLD.manufacture_date, :NEW.manufacture_date, 
+                   :OLD.status, :NEW.status, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+        
+        WHEN DELETING THEN
+            INSERT INTO DeleteAirplanes
+            VALUES(:OLD.airplane_id, :OLD.model, :OLD.capacity, 
+                   :OLD.manufacture_date, :OLD.status, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+    END CASE;
+END;
+/
+
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status)
+VALUES ('A901', 'Boeing 737', 200, TO_DATE('2010-05-12', 'YYYY-MM-DD'), 'Active');
+
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status)
+VALUES ('A902', 'Airbus A320', 180, TO_DATE('2015-07-23', 'YYYY-MM-DD'), 'Maintenance');
+
+SELECT * FROM InsertAirplanes;
+
+UPDATE Airplanes
+SET model = 'Boeing 737 MAX', capacity = 210, status = 'Active'
+WHERE airplane_id = 'A001';
+
+DELETE FROM Airplanes
+WHERE airplane_id = 'A902';
+
+SELECT * FROM DeleteAirplanes;
+SELECT * FROM UpdateAirplanes;

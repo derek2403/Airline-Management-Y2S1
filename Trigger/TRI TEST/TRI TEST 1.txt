@@ -1,0 +1,27 @@
+-- Inserting a member
+INSERT INTO Members (member_id, name, email, phone, address, date_of_birth, membership_date, total_trips) VALUES
+('Z777', 'JaneR Smith', 'janeR.smith@example.com', '4876543210', '321 Kaple St', TO_DATE('1990-07-07', 'YYYY-MM-DD'), SYSDATE, 0);
+
+-- Inserting a passenger linked to the member
+INSERT INTO Passengers (passenger_id, member_id, name, email, phone, passport_number, nationality) VALUES
+('P777', 'Z777', 'JaneR Smith', 'janeR.smith@example.com', '4876543210', 'B9876543', 'USA');
+
+-- Inserting an active promotion
+INSERT INTO Promotions (promotion_id, name, start_date, end_date, discount_percentage, status, minimum_trips_required) VALUES
+('PM77', '20% Off Everything', SYSDATE - 10, SYSDATE + 20, 20, 'ACTIVE', 1);
+
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status) VALUES
+('A777', 'Boeing 777', 300, TO_DATE('2015-05-21', 'YYYY-MM-DD'), 'ACTIVE');
+
+-- Assuming Flights table and a flight entry exist
+-- Make sure the flight_id 'F777' and airplane_id 'A777' exist or adjust these IDs based on your available data
+-- Sample flight for context, adjust as necessary:
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) VALUES
+('F777', 'A777', 'FL777', SYSDATE + 1, SYSDATE + 1.1, 'New York', 'Los Angeles', 'SCHEDULED');
+
+-- Inserting a booking that will trigger the trg_update_member_trips
+INSERT INTO Bookings (booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status) VALUES
+('B777', 'F777', 'P777', SYSDATE, '12C', 'CONFIRMED', 'PAID');
+
+SELECT * FROM Promotion_Applications WHERE booking_id = 'B777';
+

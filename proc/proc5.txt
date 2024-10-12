@@ -1,0 +1,44 @@
+CREATE OR REPLACE PROCEDURE create_dynamic_promotion (
+    p_name IN Promotions.name%TYPE,
+    p_start_date IN Promotions.start_date%TYPE,
+    p_end_date IN Promotions.end_date%TYPE,
+    p_base_discount IN NUMBER,
+    p_max_discount IN NUMBER
+) AS
+    v_current_bookings NUMBER := 0;
+    v_total_capacity NUMBER := 0;
+    v_occupancy_rate NUMBER := 0;
+    v_dynamic_discount NUMBER;
+BEGIN
+    -- Calculate current occupancy rate
+    SELECT COALESCE(SUM(a.capacity), 0), COALESCE(COUNT(b.booking_id), 0)
+    INTO v_total_capacity, v_current_bookings
+    FROM Flights f
+    JOIN Airplanes a ON f.airplane_id = a.airplane_id
+    LEFT JOIN Bookings b ON f.flight_id = b.flight_id
+    WHERE f.departure_time BETWEEN p_start_date AND p_end_date;
+
+    -- Handle case where total_capacity is zero to avoid division by zero
+    IF v_total_capacity = 0 THEN
+        v_occupancy_rate := 0;
+    ELSE
+        v_occupancy_rate := v_current_bookings / v_total_capacity;
+    END IF;
+
+    -- Calculate dynamic discount
+    v_dynamic_discount := p_base_discount + (1 - v_occupancy_rate) * (p_max_discount - p_base_discount);
+
+    -- Create promotion
+    INSERT INTO Promotions (
+        promotion_id, name, start_date, end_date, discount_percentage, status, minimum_trips_required
+    ) VALUES (
+        promotion_seq.NEXTVAL, p_name, p_start_date, p_end_date, v_dynamic_discount, 'Active', 0
+    );
+
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/

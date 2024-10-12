@@ -1,0 +1,50 @@
+ACCEPT flight_id PROMPT 'Enter Flight ID: '
+
+COLUMN flight_number FORMAT A15 HEADING 'Flight Number'
+COLUMN departure_time FORMAT A20 HEADING 'Departure Time'
+COLUMN passenger_name FORMAT A20 HEADING 'Passenger Name'
+COLUMN luggage_id FORMAT A10 HEADING 'Luggage ID'
+COLUMN luggage_type FORMAT A15 HEADING 'Luggage Type'
+COLUMN check_in_status FORMAT A15 HEADING 'Check-in Status'
+COLUMN lost_status FORMAT A10 HEADING 'Lost Status'
+
+TTITLE CENTER 'Luggage Tracking and Lost Item Analysis for Flight: &flight_id' SKIP 1
+
+SELECT 
+    f.flight_number,
+    TO_CHAR(f.departure_time, 'YYYY-MM-DD HH24:MI:SS') AS departure_time,
+    p.name AS passenger_name,
+    l.luggage_id,
+    l.type AS luggage_type,
+    l.check_in_status,
+    l.lost_status
+FROM 
+    Flights f
+    JOIN Bookings b ON f.flight_id = b.flight_id
+    JOIN Passengers p ON b.passenger_id = p.passenger_id
+    JOIN Luggage l ON b.booking_id = l.booking_id -- Ensure all luggage is linked to bookings correctly
+WHERE 
+    f.flight_id = '&flight_id'
+ORDER BY 
+    l.check_in_status DESC, l.lost_status;
+
+BREAK ON REPORT
+COMPUTE COUNT LABEL 'Total Luggage Items' OF luggage_id ON REPORT
+COMPUTE COUNT LABEL 'Lost Items' OF luggage_id ON REPORT WHERE lost_status = 'Lost'
+
+-- Summary Section
+SELECT 
+    'Summary' AS summary,
+    COUNT(l.luggage_id) AS total_luggage_items,
+    SUM(CASE WHEN l.lost_status = 'Lost' THEN 1 ELSE 0 END) AS lost_items_count,
+    AVG(l.weight) AS avg_luggage_weight
+FROM 
+    Flights f
+    JOIN Bookings b ON f.flight_id = b.flight_id
+    JOIN Luggage l ON b.booking_id = l.booking_id
+WHERE 
+    f.flight_id = '&flight_id';
+
+CLEAR COLUMNS
+CLEAR BREAKS
+TTITLE OFF

@@ -1,0 +1,69 @@
+CREATE OR REPLACE PROCEDURE promotion_effectiveness_report(
+    p_promotion_id IN VARCHAR2
+) IS
+    CURSOR promotion_cur IS
+        SELECT p.promotion_id, p.name, p.start_date, p.end_date, p.discount_percentage,
+               COUNT(pa.application_id) AS total_applications,
+               SUM(pa.discount_amount) AS total_discount_amount
+        FROM Promotions p
+        LEFT JOIN Promotion_Applications pa ON p.promotion_id = pa.promotion_id
+        WHERE p.promotion_id = p_promotion_id
+        GROUP BY p.promotion_id, p.name, p.start_date, p.end_date, p.discount_percentage;
+
+    CURSOR booking_details_cur(p_promo_id VARCHAR2) IS
+        SELECT b.booking_id, m.name AS member_name, f.flight_number, 
+               f.origin, f.destination, pa.discount_amount
+        FROM Promotion_Applications pa
+        JOIN Bookings b ON pa.booking_id = b.booking_id
+        JOIN Flights f ON b.flight_id = f.flight_id
+        JOIN Passengers p ON b.passenger_id = p.passenger_id
+        JOIN Members m ON p.member_id = m.member_id
+        WHERE pa.promotion_id = p_promo_id
+        ORDER BY pa.application_date;
+
+    v_promo_rec promotion_cur%ROWTYPE;
+    v_booking_rec booking_details_cur%ROWTYPE;
+    v_avg_discount NUMBER;
+BEGIN
+    OPEN promotion_cur;
+    FETCH promotion_cur INTO v_promo_rec;
+    
+    IF promotion_cur%NOTFOUND THEN
+        DBMS_OUTPUT.PUT_LINE('Promotion not found: ' || p_promotion_id);
+        CLOSE promotion_cur;
+        RETURN;
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('Promotion Effectiveness Evaluation');
+    DBMS_OUTPUT.PUT_LINE('Promotion: ' || v_promo_rec.name || ' (ID: ' || v_promo_rec.promotion_id || ')');
+    DBMS_OUTPUT.PUT_LINE('Period: ' || TO_CHAR(v_promo_rec.start_date, 'DD-MON-YYYY') || 
+                         ' to ' || TO_CHAR(v_promo_rec.end_date, 'DD-MON-YYYY'));
+    DBMS_OUTPUT.PUT_LINE('Discount Percentage: ' || v_promo_rec.discount_percentage || '%');
+    DBMS_OUTPUT.PUT_LINE('Total Applications: ' || v_promo_rec.total_applications);
+    DBMS_OUTPUT.PUT_LINE('Total Discount Amount: $' || TO_CHAR(v_promo_rec.total_discount_amount, '999,999.99'));
+
+    IF v_promo_rec.total_applications > 0 THEN
+        v_avg_discount := v_promo_rec.total_discount_amount / v_promo_rec.total_applications;
+        DBMS_OUTPUT.PUT_LINE('Average Discount per Application: $' || TO_CHAR(v_avg_discount, '999,999.99'));
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('Booking Details:');
+
+    OPEN booking_details_cur(p_promotion_id);
+    LOOP
+        FETCH booking_details_cur INTO v_booking_rec;
+        EXIT WHEN booking_details_cur%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE('  Booking ID: ' || v_booking_rec.booking_id || 
+                             ', Member: ' || v_booking_rec.member_name);
+        DBMS_OUTPUT.PUT_LINE('    Flight: ' || v_booking_rec.flight_number || 
+                             ' (' || v_booking_rec.origin || ' to ' || v_booking_rec.destination || ')');
+        DBMS_OUTPUT.PUT_LINE('    Discount Applied: $' || TO_CHAR(v_booking_rec.discount_amount, '999,999.99'));
+        DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    END LOOP;
+    CLOSE booking_details_cur;
+
+    CLOSE promotion_cur;
+END;
+/

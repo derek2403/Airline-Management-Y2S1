@@ -1,0 +1,19 @@
+-- Insert an airplane that is grounded for maintenance
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status)
+VALUES ('A900', 'Boeing 777', 300, TO_DATE('2015-05-20', 'YYYY-MM-DD'), 'Grounded');
+-- Insert a maintenance record for the airplane
+INSERT INTO Maintenance (maintenance_id, description)
+VALUES ('M900', 'Engine Check');
+-- Insert maintenance parts to be used in the task
+INSERT INTO Maintenance_Parts (part_id, name, replacement_date, cost, status)
+VALUES ('PA90', 'Engine Part', SYSDATE, 10000, 'Available');
+BEGIN
+    process_maintenance_task('A900', 'M900', 'PA90');
+END;
+/
+-- Verify the maintenance task creation
+SELECT * FROM Maintenance_Tasks WHERE airplane_id = 'A900';
+-- Verify the part status and replacement date
+SELECT * FROM Maintenance_Parts WHERE part_id = 'PA90';
+-- Verify the airplane status update
+SELECT * FROM Airplanes WHERE airplane_id = 'A900';

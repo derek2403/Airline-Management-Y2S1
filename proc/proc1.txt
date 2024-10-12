@@ -1,0 +1,68 @@
+CREATE OR REPLACE PROCEDURE book_flight_with_promotion (
+    p_flight_id IN Flights.flight_id%TYPE,
+    p_passenger_id IN Passengers.passenger_id%TYPE,
+    p_seat_number IN Bookings.seat_number%TYPE,
+    p_promotion_id IN Promotions.promotion_id%TYPE
+) AS
+    v_booking_id Bookings.booking_id%TYPE;
+    v_member_id Members.member_id%TYPE;
+    v_total_trips Members.total_trips%TYPE;
+    v_discount_percentage Promotions.discount_percentage%TYPE;
+    v_minimum_trips Promotions.minimum_trips_required%TYPE;
+    v_base_price NUMBER := 1000; 
+    v_final_price NUMBER;
+BEGIN
+    -- Get member_id and total_trips
+    SELECT member_id INTO v_member_id
+    FROM Passengers
+    WHERE passenger_id = p_passenger_id;
+
+    SELECT total_trips INTO v_total_trips
+    FROM Members
+    WHERE member_id = v_member_id;
+
+    -- Check promotion eligibility
+    SELECT discount_percentage, minimum_trips_required 
+    INTO v_discount_percentage, v_minimum_trips
+    FROM Promotions
+    WHERE promotion_id = p_promotion_id AND SYSDATE BETWEEN start_date AND end_date;
+
+    IF v_total_trips < v_minimum_trips THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Passenger does not meet the minimum trips requirement for this promotion');
+    END IF;
+
+    -- Calculate final price
+    v_final_price := v_base_price * (1 - v_discount_percentage / 100);
+
+    -- Create booking
+    INSERT INTO Bookings (
+        booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status
+    )
+    VALUES (
+        booking_seq.NEXTVAL, p_flight_id, p_passenger_id, SYSDATE, p_seat_number, 'Confirmed', 'Pending'
+    )
+    RETURNING booking_id INTO v_booking_id;
+
+    -- Apply promotion
+    INSERT INTO Promotion_Applications (
+        application_id, promotion_id, booking_id, application_date, discount_amount
+    )
+    VALUES (
+        seq_promotion_applications.NEXTVAL, p_promotion_id, v_booking_id, SYSDATE, v_base_price - v_final_price
+    );
+
+    -- Update member's total trips
+    UPDATE Members
+    SET total_trips = total_trips + 1
+    WHERE member_id = v_member_id;
+
+    COMMIT;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20002, 'Invalid flight, passenger, or promotion ID');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/

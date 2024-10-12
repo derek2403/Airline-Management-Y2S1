@@ -1,0 +1,23 @@
+CREATE VIEW Member_Passenger_View AS
+SELECT 
+    m.member_id,
+    m.name AS member_name,
+    m.email AS member_email,
+    m.phone AS member_phone,
+    m.address AS member_address,
+    m.date_of_birth AS member_dob,
+    m.membership_date,
+    m.total_trips,
+    p.passenger_id,
+    p.name AS passenger_name,
+    p.email AS passenger_email,
+    p.phone AS passenger_phone,
+    p.passport_number,
+    p.nationality
+FROM 
+    Members m
+LEFT JOIN 
+    Passengers p ON m.member_id = p.member_id;
+
+SELECT * FROM Member_Passenger_View;
+

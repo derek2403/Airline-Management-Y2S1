@@ -1,0 +1,84 @@
+CREATE TABLE InsertItems (
+    item_id             CHAR(5),
+    name                VARCHAR2(30),
+    type                VARCHAR2(30),
+    price               NUMBER,
+    availability_status VARCHAR2(12),
+    action_user         VARCHAR2(30),
+    action_time         DATE,
+    action_time_char    VARCHAR2(8)
+);
+
+CREATE TABLE UpdateItems (
+    old_item_id             CHAR(5),
+    old_name                VARCHAR2(30),
+    new_name                VARCHAR2(30),
+    old_type                VARCHAR2(30),
+    new_type                VARCHAR2(30),
+    old_price               NUMBER,
+    new_price               NUMBER,
+    old_availability_status VARCHAR2(12),
+    new_availability_status VARCHAR2(12),
+    action_user             VARCHAR2(30),
+    action_time             DATE,
+    action_time_char        VARCHAR2(8)
+);
+
+CREATE TABLE DeleteItems (
+    item_id             CHAR(5),
+    name                VARCHAR2(30),
+    type                VARCHAR2(30),
+    price               NUMBER,
+    availability_status VARCHAR2(12),
+    action_user         VARCHAR2(30),
+    action_time         DATE,
+    action_time_char    VARCHAR2(8)
+);
+
+CREATE OR REPLACE TRIGGER trg_track_Items
+AFTER INSERT OR UPDATE OR DELETE ON Items
+FOR EACH ROW
+BEGIN
+    CASE
+        -- Track insert actions
+        WHEN INSERTING THEN
+            INSERT INTO InsertItems
+            VALUES(:NEW.item_id, :NEW.name, :NEW.type, 
+                   :NEW.price, :NEW.availability_status, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+
+        -- Track update actions
+        WHEN UPDATING THEN
+            INSERT INTO UpdateItems
+            VALUES(:OLD.item_id, :OLD.name, :NEW.name, 
+                   :OLD.type, :NEW.type, 
+                   :OLD.price, :NEW.price, 
+                   :OLD.availability_status, :NEW.availability_status, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+        
+        -- Track delete actions
+        WHEN DELETING THEN
+            INSERT INTO DeleteItems
+            VALUES(:OLD.item_id, :OLD.name, :OLD.type, 
+                   :OLD.price, :OLD.availability_status, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+    END CASE;
+END;
+/
+
+INSERT INTO Items (item_id, name, type, price, availability_status)
+VALUES ('I991', 'Laptop', 'Electronics', 1500, 'Available');
+
+INSERT INTO Items (item_id, name, type, price, availability_status)
+VALUES ('I992', 'Table', 'Furniture', 300, 'Out of Stock');
+
+UPDATE Items
+SET price = 1400, availability_status = 'Available'
+WHERE item_id = 'I991';
+
+DELETE FROM Items
+WHERE item_id = 'I992';
+
+SELECT * FROM InsertItems;
+SELECT * FROM InsertItems;
+SELECT * FROM DeleteItems;

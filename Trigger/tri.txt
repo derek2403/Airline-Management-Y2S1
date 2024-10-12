@@ -1,0 +1,321 @@
+-- Update the trigger with the new sequence name(tri1)
+CREATE OR REPLACE TRIGGER trg_update_member_trips
+AFTER INSERT ON Bookings
+FOR EACH ROW
+DECLARE
+    v_total_trips NUMBER;
+    v_member_id VARCHAR2(5);
+    v_eligible_promotion_id VARCHAR2(5);
+    v_discount_percentage NUMBER;
+    v_discount_amount NUMBER;
+BEGIN
+    -- Get member_id from Passengers table
+    SELECT member_id INTO v_member_id
+    FROM Passengers
+    WHERE passenger_id = :NEW.passenger_id;
+
+    -- Update total_trips for the member
+    UPDATE Members
+    SET total_trips = total_trips + 1
+    WHERE member_id = v_member_id
+    RETURNING total_trips INTO v_total_trips;
+
+    -- Check for eligible promotions
+    BEGIN
+        SELECT promotion_id, discount_percentage
+        INTO v_eligible_promotion_id, v_discount_percentage
+        FROM Promotions
+        WHERE status = 'ACTIVE'
+        AND start_date <= SYSDATE
+        AND end_date >= SYSDATE
+        AND minimum_trips_required <= v_total_trips
+        AND ROWNUM = 1
+        ORDER BY discount_percentage DESC;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_eligible_promotion_id := NULL;
+            v_discount_percentage := 0;
+    END;
+
+    -- If eligible promotion found, apply it
+    IF v_eligible_promotion_id IS NOT NULL THEN
+        -- Calculate discount amount (assume a base fare of 1000 for simplicity)
+        v_discount_amount := 1000 * (v_discount_percentage / 100);
+
+        -- Insert into Promotion_Applications
+        INSERT INTO Promotion_Applications (
+            application_id,
+            promotion_id,
+            booking_id,
+            application_date,
+            discount_amount
+        ) VALUES (
+            'N' || LPAD(seq_promotion_applications.NEXTVAL, 3, '0'),  -- Prefixing with 'N'
+            v_eligible_promotion_id,
+            :NEW.booking_id,
+            SYSDATE,
+            v_discount_amount
+        );
+    END IF;
+END;
+/
+
+--TRI 2
+CREATE OR REPLACE TRIGGER trg_enforce_capacity
+BEFORE INSERT OR UPDATE ON Bookings
+FOR EACH ROW
+DECLARE
+    v_capacity NUMBER;
+    v_booked_seats NUMBER;
+BEGIN
+    -- Get the capacity of the airplane assigned to the flight
+    SELECT a.capacity
+    INTO v_capacity
+    FROM Airplanes a
+    JOIN Flights f ON a.airplane_id = f.airplane_id
+    WHERE f.flight_id = :NEW.flight_id;
+
+    -- Count the number of bookings for this flight, excluding cancelled bookings
+    SELECT COUNT(*)
+    INTO v_booked_seats
+    FROM Bookings
+    WHERE flight_id = :NEW.flight_id
+    AND status != 'CANCELLED';
+
+    -- If it's an update and the status is changing to 'CANCELLED', don't count this booking
+    IF UPDATING AND :OLD.status = 'CONFIRMED' AND :NEW.status = 'CANCELLED' THEN
+        v_booked_seats := v_booked_seats - 1;
+    ELSIF INSERTING THEN
+        -- For new bookings, increment the booked seats count
+        v_booked_seats := v_booked_seats + 1;
+    END IF;
+
+    -- Check if adding this booking would exceed the capacity
+    IF v_booked_seats > v_capacity THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Flight is fully booked. Cannot add more passengers.');
+    END IF;
+END;
+/
+-- tri3
+CREATE OR REPLACE TRIGGER trg_manage_staff_workload
+BEFORE INSERT ON Workload_Allocations
+FOR EACH ROW
+DECLARE
+    v_staff_position VARCHAR2(30);
+    v_flight_departure DATE;
+    v_flight_arrival DATE;
+    v_conflicting_allocations NUMBER;
+    v_total_hours NUMBER;
+    v_max_hours NUMBER := 40; -- Assume 40 hours per week max
+BEGIN
+    -- Get staff position
+    SELECT position INTO v_staff_position
+    FROM Staff
+    WHERE staff_id = :NEW.staff_id;
+
+    -- Get flight times
+    SELECT departure_time, arrival_time
+    INTO v_flight_departure, v_flight_arrival
+    FROM Flights
+    WHERE flight_id = :NEW.flight_id;
+
+    -- Check for conflicting allocations
+    SELECT COUNT(*)
+    INTO v_conflicting_allocations
+    FROM Workload_Allocations wa
+    JOIN Flights f ON wa.flight_id = f.flight_id
+    WHERE wa.staff_id = :NEW.staff_id
+    AND f.departure_time < v_flight_arrival
+    AND f.arrival_time > v_flight_departure;
+
+    IF v_conflicting_allocations > 0 THEN
+        RAISE_APPLICATION_ERROR(-20002, 'Staff member already allocated to a conflicting flight.');
+    END IF;
+
+    -- Calculate total work hours for the week
+    SELECT NVL(SUM((f.arrival_time - f.departure_time) * 24), 0)
+    INTO v_total_hours
+    FROM Workload_Allocations wa
+    JOIN Flights f ON wa.flight_id = f.flight_id
+    WHERE wa.staff_id = :NEW.staff_id
+    AND f.departure_time BETWEEN TRUNC(SYSDATE, 'IW') AND TRUNC(SYSDATE, 'IW') + 7;
+
+    v_total_hours := v_total_hours + ((v_flight_arrival - v_flight_departure) * 24);
+
+    IF v_total_hours > v_max_hours THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Staff member would exceed maximum weekly hours.');
+    END IF;
+
+    -- Ensure proper staffing based on role
+    IF v_staff_position = 'PILOT' AND :NEW.role != 'PILOT' THEN
+        RAISE_APPLICATION_ERROR(-20004, 'Pilots can only be assigned as pilots.');
+    ELSIF v_staff_position = 'FLIGHT_ATTENDANT' AND :NEW.role NOT IN ('ATTENDANT', 'LEAD_ATTENDANT') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Flight attendants can only be assigned as attendants or lead attendants.');
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER trg_maintenance_scheduling
+FOR INSERT OR UPDATE ON Maintenance_Tasks
+COMPOUND TRIGGER
+
+    -- Temporary storage for airplane IDs
+    TYPE t_airplane_ids IS TABLE OF VARCHAR2(12) INDEX BY PLS_INTEGER;
+    g_airplane_ids t_airplane_ids;
+    g_idx PLS_INTEGER := 0;
+
+    AFTER EACH ROW IS
+    BEGIN
+        IF :NEW.status = 'IN_PROGRESS' THEN
+            g_idx := g_idx + 1;
+            g_airplane_ids(g_idx) := :NEW.airplane_id;
+        ELSIF :NEW.status = 'COMPLETED' THEN
+            g_idx := g_idx + 1;
+            g_airplane_ids(g_idx) := :NEW.airplane_id;
+        END IF;
+    END AFTER EACH ROW;
+
+    AFTER STATEMENT IS
+    BEGIN
+        FOR i IN 1 .. g_idx LOOP
+            -- Update airplane status based on maintenance task status
+            DECLARE
+                v_pending_tasks NUMBER;
+            BEGIN
+                SELECT COUNT(*)
+                INTO v_pending_tasks
+                FROM Maintenance_Tasks
+                WHERE airplane_id = g_airplane_ids(i)
+                AND status IN ('SCHEDULED', 'IN_PROGRESS');
+
+                IF v_pending_tasks = 0 THEN
+                    UPDATE Airplanes
+                    SET status = 'AVAILABLE'
+                    WHERE airplane_id = g_airplane_ids(i);
+
+                    -- Reset flights if necessary
+                    UPDATE Flights
+                    SET status = 'SCHEDULED'
+                    WHERE airplane_id = g_airplane_ids(i)
+                    AND status = 'RESCHEDULED';
+                ELSE
+                    UPDATE Airplanes
+                    SET status = 'MAINTENANCE'
+                    WHERE airplane_id = g_airplane_ids(i);
+                END IF;
+            END;
+        END LOOP;
+    END AFTER STATEMENT;
+
+END trg_maintenance_scheduling;
+/
+
+
+-- tri5
+CREATE OR REPLACE TRIGGER trg_overbooking_waitlist
+BEFORE INSERT OR UPDATE ON Bookings
+FOR EACH ROW
+DECLARE
+    v_capacity NUMBER;
+    v_booked_seats NUMBER := 0;
+    v_waitlist_count NUMBER := 0;
+    v_overbooking_limit NUMBER := 0.1; -- 10% overbooking allowed
+BEGIN
+    -- Get the capacity of the airplane assigned to the flight
+    BEGIN
+        SELECT a.capacity
+        INTO v_capacity
+        FROM Airplanes a
+        JOIN Flights f ON a.airplane_id = f.airplane_id
+        WHERE f.flight_id = :NEW.flight_id;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- If no airplane is found for the flight, raise an error or handle accordingly
+            RAISE_APPLICATION_ERROR(-20001, 'No airplane found for this flight.');
+    END;
+
+    -- Calculate overbooking limit
+    v_capacity := v_capacity * (1 + v_overbooking_limit);
+
+    -- Count the number of confirmed bookings for this flight
+    BEGIN
+        SELECT COUNT(*)
+        INTO v_booked_seats
+        FROM Bookings
+        WHERE flight_id = :NEW.flight_id
+        AND status = 'CONFIRMED';
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- If no confirmed bookings exist, set booked seats to 0
+            v_booked_seats := 0;
+    END;
+
+    -- Count the number of waitlisted bookings for this flight
+    BEGIN
+        SELECT COUNT(*)
+        INTO v_waitlist_count
+        FROM Bookings
+        WHERE flight_id = :NEW.flight_id
+        AND status = 'WAITLISTED';
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- If no waitlisted bookings exist, set waitlist count to 0
+            v_waitlist_count := 0;
+    END;
+
+    -- If it's a new booking or status changed to 'CONFIRMED'
+    IF (INSERTING OR (UPDATING AND :NEW.status = 'CONFIRMED')) THEN
+        -- Check if we're within the overbooking limit
+        IF v_booked_seats < v_capacity THEN
+            -- Confirm the booking
+            :NEW.status := 'CONFIRMED';
+        ELSE
+            -- Add to waitlist if overbooked
+            :NEW.status := 'WAITLISTED';
+        END IF;
+    -- If a booking is cancelled or changed from 'CONFIRMED' to another status
+    ELSIF UPDATING AND :OLD.status = 'CONFIRMED' AND :NEW.status != 'CONFIRMED' THEN
+        -- Check if there are waitlisted bookings
+        IF v_waitlist_count > 0 THEN
+            -- Move the first waitlisted booking to confirmed status
+            UPDATE Bookings
+            SET status = 'CONFIRMED'
+            WHERE booking_id = (
+                SELECT booking_id
+                FROM (
+                    SELECT booking_id
+                    FROM Bookings
+                    WHERE flight_id = :NEW.flight_id
+                    AND status = 'WAITLISTED'
+                    ORDER BY booking_date
+                )
+                WHERE ROWNUM = 1
+            );
+        END IF;
+    END IF;
+END;
+/
+
+-- Update the trigger to use a shorter payment method description
+CREATE OR REPLACE TRIGGER trg_insert_payment_on_purchase
+AFTER INSERT ON Item_Purchases
+FOR EACH ROW
+DECLARE
+    v_item_price NUMBER;
+    v_total_amount NUMBER;
+    v_payment_id VARCHAR2(20);
+BEGIN
+    -- Retrieve the price of the item from the Items table
+    SELECT price INTO v_item_price FROM Items WHERE item_id = :NEW.item_id;
+
+    -- Calculate the total price based on the quantity purchased
+    v_total_amount := v_item_price * :NEW.quantity;
+
+    -- Generate a unique payment ID using a sequence
+    v_payment_id := 'P' || TO_CHAR(payment_seq.NEXTVAL);
+
+    -- Insert a new payment record into the Payments table
+    INSERT INTO Payments (payment_id, booking_id, payment_date, amount, payment_method, status)
+    VALUES (v_payment_id, :NEW.booking_id, SYSDATE, v_total_amount, 'CreditCard', 'pending');
+END;
+/

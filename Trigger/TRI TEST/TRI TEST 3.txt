@@ -1,0 +1,25 @@
+-- Insert an airplane for these flights
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status) VALUES
+('A779', 'Boeing 737', 180, TO_DATE('2012-05-21', 'YYYY-MM-DD'), 'ACTIVE');
+
+INSERT INTO Staff (staff_id, name, email, phone, position, hire_date, salary) VALUES
+('S779', 'Roberrt Frost', 'roberrt.frost@example.com', '1134567890', 'PILOT', TO_DATE('2015-01-01', 'YYYY-MM-DD'), 100000);
+
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) VALUES
+('F779', 'A779', 'FL779', SYSDATE + 1, SYSDATE + 1.1, 'New York', 'Chicago', 'SCHEDULED');
+
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) VALUES
+('F780', 'A779', 'FL780', SYSDATE + 1, SYSDATE + 1.2, 'Chicago', 'Los Angeles', 'SCHEDULED');
+
+-- Allocating the pilot to the first flight
+INSERT INTO Workload_Allocations (allocation_id, staff_id, flight_id, role, allocation_date) VALUES
+('W779', 'S779', 'F779', 'PILOT', SYSDATE);
+
+INSERT INTO Workload_Allocations (allocation_id, staff_id, flight_id, role, allocation_date) VALUES
+    ('W780', 'S779', 'F780', 'PILOT', SYSDATE);
+
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) VALUES
+('F781', 'A779', 'FL781', TRUNC(SYSDATE, 'IW') + 4, TRUNC(SYSDATE, 'IW') + 5.75, 'New York', 'Los Angeles', 'SCHEDULED');
+
+INSERT INTO Workload_Allocations (allocation_id, staff_id, flight_id, role, allocation_date) VALUES
+    ('W781', 'S779', 'F781', 'PILOT', SYSDATE);

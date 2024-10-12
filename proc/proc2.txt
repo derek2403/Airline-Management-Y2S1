@@ -1,0 +1,50 @@
+CREATE OR REPLACE PROCEDURE assign_staff_to_flight (
+    p_flight_id IN Flights.flight_id%TYPE
+) AS
+    CURSOR c_required_roles IS
+        SELECT 'Pilot' AS role FROM DUAL
+        UNION ALL
+        SELECT 'Co-Pilot' FROM DUAL
+        UNION ALL
+        SELECT 'Flight Attendant' FROM DUAL
+        UNION ALL
+        SELECT 'Flight Attendant' FROM DUAL;
+
+    CURSOR c_available_staff (p_role IN VARCHAR2) IS
+        SELECT s.staff_id, COUNT(wa.allocation_id) AS current_workload, s.hire_date
+        FROM Staff s
+        LEFT JOIN Workload_Allocations wa ON s.staff_id = wa.staff_id
+            AND wa.allocation_date BETWEEN TRUNC(SYSDATE) AND TRUNC(SYSDATE + 7)
+        WHERE s.position = p_role
+        GROUP BY s.staff_id, s.hire_date
+        ORDER BY current_workload ASC, s.hire_date ASC;
+
+    v_staff_id Staff.staff_id%TYPE;
+    v_workload NUMBER;
+    v_hire_date DATE; -- New variable to store hire_date
+BEGIN
+    FOR role_rec IN c_required_roles LOOP
+        OPEN c_available_staff(role_rec.role);
+        FETCH c_available_staff INTO v_staff_id, v_workload, v_hire_date; -- Updated FETCH statement
+        
+        IF c_available_staff%NOTFOUND THEN
+            RAISE_APPLICATION_ERROR(-20003, 'No available ' || role_rec.role || ' found');
+        END IF;
+
+        INSERT INTO Workload_Allocations (
+            allocation_id, staff_id, flight_id, role, allocation_date
+        )
+        VALUES (
+            workload_allocation_seq.NEXTVAL, v_staff_id, p_flight_id, role_rec.role, SYSDATE
+        );
+
+        CLOSE c_available_staff;
+    END LOOP;
+
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/

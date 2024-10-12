@@ -1,0 +1,79 @@
+CREATE TABLE InsertAirplanes (
+    airplane_id         CHAR(5),
+    model               VARCHAR2(30),
+    capacity            NUMBER,
+    manufacture_date    DATE,
+    status              VARCHAR2(12),
+    action_user         VARCHAR2(30),
+    action_time         DATE,
+    action_time_char    VARCHAR2(8)
+);
+CREATE TABLE UpdateAirplanes (
+    old_airplane_id         CHAR(5),
+    old_model               VARCHAR2(30),
+    new_model               VARCHAR2(30),
+    old_capacity            NUMBER,
+    new_capacity            NUMBER,
+    old_manufacture_date    DATE,
+    new_manufacture_date    DATE,
+    old_status              VARCHAR2(12),
+    new_status              VARCHAR2(12),
+    action_user             VARCHAR2(30),
+    action_time             DATE,
+    action_time_char        VARCHAR2(8)
+);
+
+CREATE TABLE DeleteAirplanes (
+    airplane_id         CHAR(5),
+    model               VARCHAR2(30),
+    capacity            NUMBER,
+    manufacture_date    DATE,
+    status              VARCHAR2(12),
+    action_user         VARCHAR2(30),
+    action_time         DATE,
+    action_time_char    VARCHAR2(8)
+);
+
+CREATE OR REPLACE TRIGGER trg_track_Airplanes
+AFTER INSERT OR UPDATE OR DELETE ON Airplanes
+FOR EACH ROW
+BEGIN
+    CASE
+        WHEN INSERTING THEN
+            INSERT INTO InsertAirplanes
+            VALUES(:NEW.airplane_id, :NEW.model, :NEW.capacity, :NEW.manufacture_date, 
+                   :NEW.status, USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+
+        WHEN UPDATING THEN
+            INSERT INTO UpdateAirplanes
+            VALUES(:OLD.airplane_id, :OLD.model, :NEW.model, 
+                   :OLD.capacity, :NEW.capacity, 
+                   :OLD.manufacture_date, :NEW.manufacture_date, 
+                   :OLD.status, :NEW.status, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+        
+        WHEN DELETING THEN
+            INSERT INTO DeleteAirplanes
+            VALUES(:OLD.airplane_id, :OLD.model, :OLD.capacity, 
+                   :OLD.manufacture_date, :OLD.status, 
+                   USER, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'));
+    END CASE;
+END;
+/
+
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status)
+VALUES ('A901', 'Boeing 737', 200, TO_DATE('2010-05-12', 'YYYY-MM-DD'), 'Active');
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status)
+VALUES ('A902', 'Airbus A320', 180, TO_DATE('2015-07-23', 'YYYY-MM-DD'), 'Maintenance');
+
+UPDATE Airplanes
+SET model = 'Boeing 737 MAX', capacity = 210, status = 'Active'
+WHERE airplane_id = 'A001';
+
+DELETE FROM Airplanes
+WHERE airplane_id = 'A902';
+
+
+SELECT * FROM InsertAirplanes;
+SELECT * FROM DeleteAirplanes;
+SELECT * FROM UpdateAirplanes;

@@ -1,0 +1,22 @@
+-- Inserting an airplane with minimal capacity
+INSERT INTO Airplanes (airplane_id, model, capacity, manufacture_date, status) VALUES
+('A820', 'Boeing 747', 1, TO_DATE('2020-01-01', 'YYYY-MM-DD'), 'ACTIVE');
+
+-- Inserting a flight using the above airplane with 1 seat capacity
+INSERT INTO Flights (flight_id, airplane_id, flight_number, departure_time, arrival_time, origin, destination, status) VALUES
+('F820', 'A820', 'FL820', SYSDATE + 1, SYSDATE + 1.1, 'Los Angeles', 'New York', 'SCHEDULED');
+
+-- Inserting a booking that should be confirmed (within capacity)
+INSERT INTO Bookings (booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status) VALUES
+('B821', 'F820', 'P001', SYSDATE, '1', 'CONFIRMED', 'PAID');
+
+-- Inserting additional bookings that should trigger overbooking
+INSERT INTO Bookings (booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status) VALUES
+('B822', 'F820', 'P002', SYSDATE, '2', 'CONFIRMED', 'PAID');
+
+-- Optionally, add more to clearly observe the trigger's behavior under extreme overbooking
+INSERT INTO Bookings (booking_id, flight_id, passenger_id, booking_date, seat_number, status, payment_status) VALUES
+('B823', 'F820', 'P003', SYSDATE, '3', 'CONFIRMED', 'PAID');
+
+-- Query to check the status of all bookings for the flight
+SELECT booking_id, status FROM Bookings WHERE flight_id = 'F820' ORDER BY booking_id;

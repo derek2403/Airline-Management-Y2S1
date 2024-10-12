@@ -1,0 +1,37 @@
+ACCEPT staff_id PROMPT 'Enter Staff ID: '
+ACCEPT start_date PROMPT 'Enter Start Date (YYYY-MM-DD): '
+ACCEPT end_date PROMPT 'Enter End Date (YYYY-MM-DD): '
+
+COLUMN staff_name FORMAT A20 HEADING 'Staff Name'
+COLUMN position FORMAT A15 HEADING 'Position'
+COLUMN total_flights_assigned FORMAT 999 HEADING 'Total Flights'
+COLUMN avg_passengers FORMAT 999.99 HEADING 'Avg Passengers'
+COLUMN flight_completion_rate FORMAT 999.99 HEADING 'Completion Rate (%)'
+
+TTITLE CENTER 'Workload and Flight Performance Analysis for Staff: &staff_id' SKIP 1 -
+       CENTER 'Period: &start_date to &end_date' SKIP 1
+
+SELECT 
+    s.name AS staff_name,
+    s.position,
+    COUNT(DISTINCT wa.flight_id) AS total_flights_assigned,
+    AVG(b.passengers_count) AS avg_passengers,
+    (CAST(SUM(CASE WHEN f.status IN ('On Time', 'Delayed') THEN 1 ELSE 0 END) AS FLOAT) / 
+     CAST(COUNT(*) AS FLOAT)) * 100 AS flight_completion_rate
+FROM 
+    Staff s
+    JOIN Workload_Allocations wa ON s.staff_id = wa.staff_id
+    JOIN Flights f ON wa.flight_id = f.flight_id
+    LEFT JOIN (
+        SELECT flight_id, COUNT(*) AS passengers_count
+        FROM Bookings
+        GROUP BY flight_id
+    ) b ON f.flight_id = b.flight_id
+WHERE 
+    s.staff_id = '&staff_id'
+    AND f.departure_time BETWEEN TO_DATE('&start_date', 'YYYY-MM-DD') AND TO_DATE('&end_date', 'YYYY-MM-DD')
+GROUP BY 
+    s.staff_id, s.name, s.position;
+
+CLEAR COLUMNS
+TTITLE OFF

@@ -1,0 +1,84 @@
+CREATE OR REPLACE PROCEDURE generate_member_newsletter (
+    p_member_id IN Members.member_id%TYPE
+) AS
+    v_member_name Members.name%TYPE;
+    v_total_trips Members.total_trips%TYPE;
+    v_last_flight_date DATE;
+    v_recommended_destination Flights.destination%TYPE;
+    v_newsletter_content CLOB;
+
+    CURSOR c_recent_promotions IS
+        SELECT name, discount_percentage, start_date, end_date
+        FROM (
+            SELECT name, discount_percentage, start_date, end_date
+            FROM Promotions
+            WHERE start_date > SYSDATE
+            ORDER BY start_date ASC
+        )
+        WHERE ROWNUM <= 3;
+BEGIN
+    -- Get member details
+    SELECT name, total_trips
+    INTO v_member_name, v_total_trips
+    FROM Members
+    WHERE member_id = p_member_id;
+
+    -- Get last flight date
+    SELECT MAX(f.arrival_time)
+    INTO v_last_flight_date
+    FROM Bookings b
+    JOIN Flights f ON b.flight_id = f.flight_id
+    JOIN Passengers p ON b.passenger_id = p.passenger_id
+    WHERE p.member_id = p_member_id;
+
+    -- Get recommended destination (most popular in the last month)
+    BEGIN
+        SELECT destination
+        INTO v_recommended_destination
+        FROM (
+            SELECT f.destination, COUNT(*) AS popularity
+            FROM Flights f
+            JOIN Bookings b ON f.flight_id = b.flight_id
+            WHERE f.departure_time > SYSDATE - INTERVAL '30' DAY
+            GROUP BY f.destination
+            ORDER BY popularity DESC
+        )
+        WHERE ROWNUM = 1;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_recommended_destination := 'N/A'; -- Default value if no data is found
+    END;
+
+    -- Generate newsletter content
+    v_newsletter_content := 'To: ' || p_member_id || '@example.com' || CHR(10) ||
+                            'Subject: Your Personalized Travel Newsletter' || CHR(10) || CHR(10) ||
+                            'Dear ' || v_member_name || ',' || CHR(10) || CHR(10) ||
+                            'We hope this newsletter finds you well. Here''s a summary of your recent activity and some exciting offers:' || CHR(10) || CHR(10) ||
+                            'Total Trips: ' || v_total_trips || CHR(10) ||
+                            'Last Flight: ' || TO_CHAR(v_last_flight_date, 'DD-MON-YYYY') || CHR(10) || CHR(10) ||
+                            'Based on your travel history, we think you might enjoy visiting ' || v_recommended_destination || ' for your next trip!' || CHR(10) || CHR(10) ||
+                            'Upcoming Promotions:';
+
+    -- Add recent promotions to the newsletter
+    FOR promo IN c_recent_promotions LOOP
+        v_newsletter_content := v_newsletter_content || CHR(10) ||
+            '- ' || promo.name || ': ' || promo.discount_percentage || '% off (Valid from ' ||
+            TO_CHAR(promo.start_date, 'DD-MON-YYYY') || ' to ' || TO_CHAR(promo.end_date, 'DD-MON-YYYY') || ')';
+    END LOOP;
+
+    v_newsletter_content := v_newsletter_content || CHR(10) || CHR(10) ||
+                            'Thank you for choosing our airline. We look forward to seeing you on board soon!' || CHR(10) || CHR(10) ||
+                            'Best regards,' || CHR(10) ||
+                            'Your Airline Team';
+
+    -- Print newsletter content
+    DBMS_OUTPUT.PUT_LINE(v_newsletter_content);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20009, 'Invalid member ID or no flight history found');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
